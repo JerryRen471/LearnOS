@@ -2,21 +2,37 @@
 
 ## Cursor Cloud specific instructions
 
-### Project Overview
+### Project overview
 
 LearnOS is an intelligent personal knowledge system powered by LLMs, RAG, and Knowledge Graphs. The project is Python-based (Python 3.12+).
 
-### Current State
+### Repository state
 
-This repository is at its initial stage — it contains only a `README.md` and a `.gitignore`. There is no application code, no dependency files, no tests, and no build/service infrastructure yet.
+- Python package source lives in `src/zhicore`.
+- Tests live in `tests`.
+- Packaging and test configuration are defined in `pyproject.toml`.
+- A CLI entrypoint exists: `zhicore = zhicore.cli:main`.
 
 ### Environment
 
 - **Python**: 3.12.3 is available system-wide.
-- **No dependency files** exist yet (`requirements.txt`, `pyproject.toml`, etc.). When they are added, the update script should be revised accordingly.
-- **No services** need to be started — there is no runnable application code.
+- **Dependency file**: `pyproject.toml` is the source of truth.
+- **Services**: no external services are required for core local tests.
 
-### Development Notes
+### Setup commands
 
-- The `.gitignore` is a standard Python template, confirming this will be a Python project.
-- When source code and dependencies are added, update this file with lint/test/build/run instructions.
+- Install package + test dependencies: `python -m pip install -e ".[dev]"`
+- Install optional PDF support: `python -m pip install -e ".[pdf]"`
+- Install optional RAG stack: `python -m pip install -e ".[rag]"`
+
+### Validation commands
+
+- Run focused tests: `pytest tests`
+- Run a specific test module when iterating: `pytest tests/test_pipeline.py`
+- Check CLI wiring: `python -m zhicore.cli --help`
+
+### Agent working notes
+
+- Keep edits tightly scoped to the user's explicit request.
+- For documentation-only changes, validate by re-reading updated files.
+- Update this file whenever setup, test, run, or dependency conventions change.
