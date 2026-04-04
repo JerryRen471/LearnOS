@@ -1,11 +1,11 @@
-"""RAG orchestration for Phase 1."""
+"""RAG orchestration for the optimized retrieval layer."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from zhicore.types import SearchHit
-from zhicore.vector_store import InMemoryVectorStore
+from zhicore.vector_store import HybridRetriever, InMemoryVectorStore
 
 
 @dataclass(slots=True)
@@ -26,11 +26,29 @@ class RAGResult:
 class RAGEngine:
     """Minimal RAG engine returning answer + citations."""
 
-    def __init__(self, store: InMemoryVectorStore) -> None:
+    def __init__(self, store: InMemoryVectorStore | HybridRetriever) -> None:
         self.store = store
 
-    def ask(self, query: str, top_k: int = 4) -> RAGResult:
-        hits = self.store.search(query=query, top_k=top_k)
+    def ask(
+        self,
+        query: str,
+        top_k: int = 4,
+        dense_k: int = 12,
+        sparse_k: int = 12,
+        rrf_k: int = 60,
+        retrieval_mode: str = "hybrid",
+    ) -> RAGResult:
+        search_params = {"query": query, "top_k": top_k}
+        if _accepts_hybrid_kwargs(self.store):
+            search_params.update(
+                {
+                    "dense_k": dense_k,
+                    "sparse_k": sparse_k,
+                    "rrf_k": rrf_k,
+                    "retrieval_mode": retrieval_mode,
+                }
+            )
+        hits = self.store.search(**search_params)
         if not hits:
             return RAGResult(answer="未检索到相关知识片段，请先执行 ingest。", citations=[])
 
@@ -60,3 +78,8 @@ class RAGEngine:
         for citation in citations:
             lines.append(f"[{citation.index}] {citation.excerpt}")
         return "\n".join(lines)
+
+
+def _accepts_hybrid_kwargs(store: object) -> bool:
+    klass = store.__class__.__name__.lower()
+    return "hybrid" in klass

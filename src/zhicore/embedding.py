@@ -1,12 +1,25 @@
-"""Local embedding implementation for Phase 1 MVP."""
+"""Embedding implementations used by the retrieval layer."""
 
 from __future__ import annotations
 
 import hashlib
 import math
 import re
+from typing import Protocol
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]+")
+
+
+class Embedder(Protocol):
+    """Common embedder protocol for pluggable retrieval backends."""
+
+    dim: int
+
+    def embed(self, text: str) -> list[float]:
+        ...
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        ...
 
 
 class HashEmbedding:
@@ -33,6 +46,45 @@ class HashEmbedding:
 
     def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [self.embed(text) for text in texts]
+
+
+class SentenceTransformerEmbedding:
+    """SentenceTransformer embedder with normalized dense vectors."""
+
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:  # pragma: no cover - import guard
+            raise RuntimeError(
+                "SentenceTransformer embedding requires extra deps. "
+                "Install with: pip install '.[rag-advanced]'"
+            ) from exc
+        self.model_name = model_name
+        self._model = SentenceTransformer(model_name)
+        self.dim = int(self._model.get_sentence_embedding_dimension())
+        self._cache: dict[str, list[float]] = {}
+
+    def embed(self, text: str) -> list[float]:
+        cached = self._cache.get(text)
+        if cached is not None:
+            return cached
+        vector = self._model.encode([text], normalize_embeddings=True)[0]
+        result = [float(value) for value in vector]
+        self._cache[text] = result
+        return result
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        uncached: list[str] = []
+        for text in texts:
+            if text not in self._cache:
+                uncached.append(text)
+        if uncached:
+            matrix = self._model.encode(uncached, normalize_embeddings=True)
+            for text, row in zip(uncached, matrix):
+                self._cache[text] = [float(value) for value in row]
+        return [self._cache[text] for text in texts]
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
