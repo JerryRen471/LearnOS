@@ -13,6 +13,7 @@ dependencies = []
 [project.optional-dependencies]
 pdf = ["pypdf>=4.2.0"]
 dev = ["pytest>=8.2.0"]
+rag = ["faiss-cpu", "rank-bm25", "sentence-transformers"]
 
 [project.scripts]
 zhicore = "zhicore.cli:main"
