@@ -1,0 +1,418 @@
+"""Knowledge graph extraction and local persistence for Phase 2."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+from zhicore.types import Chunk
+
+NODE_TYPES = {"Concept", "Entity", "Definition", "Formula"}
+EDGE_TYPES = {"related-to", "is-a", "derived-from", "used-in"}
+TOKEN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]*|[\u4e00-\u9fff]{2,}")
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "be",
+    "for",
+    "from",
+    "in",
+    "is",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "with",
+    "using",
+    "used",
+    "this",
+    "these",
+    "those",
+    "we",
+    "you",
+    "it",
+    "通过",
+    "以及",
+    "用于",
+    "一种",
+    "一个",
+    "这个",
+    "进行",
+    "支持",
+    "相关",
+    "可以",
+    "系统",
+}
+
+_EN_WORD = r"[A-Za-z][A-Za-z0-9_-]{1,40}"
+_ZH_WORD = r"[\u4e00-\u9fff]{2,20}"
+_WORD = rf"(?:{_EN_WORD}|{_ZH_WORD})"
+
+_PATTERNS = {
+    "is-a": [
+        re.compile(rf"(?P<src>{_WORD})\s+is\s+(?:an?\s+)?(?P<dst>{_WORD})", re.IGNORECASE),
+        re.compile(rf"(?P<src>{_WORD})\s*是\s*(?P<dst>{_WORD})"),
+    ],
+    "used-in": [
+        re.compile(rf"(?P<src>{_WORD})\s+used\s+in\s+(?P<dst>{_WORD})", re.IGNORECASE),
+        re.compile(rf"(?P<src>{_WORD})\s*用于\s*(?P<dst>{_WORD})"),
+    ],
+    "derived-from": [
+        re.compile(rf"(?P<src>{_WORD})\s+derived\s+from\s+(?P<dst>{_WORD})", re.IGNORECASE),
+    ],
+}
+
+
+@dataclass(slots=True)
+class KnowledgeNode:
+    node_id: str
+    node_type: str
+    name: str
+    description: str = ""
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class KnowledgeEdge:
+    edge_id: str
+    source_id: str
+    target_id: str
+    edge_type: str
+    evidence_chunk_id: str
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class KnowledgeGraph:
+    nodes: dict[str, KnowledgeNode] = field(default_factory=dict)
+    edges: list[KnowledgeEdge] = field(default_factory=list)
+    chunk_concepts: dict[str, list[str]] = field(default_factory=dict)
+
+    def add_node(
+        self,
+        node_type: str,
+        name: str,
+        description: str = "",
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        if node_type not in NODE_TYPES:
+            raise ValueError(f"Unsupported node type: {node_type}")
+        node_id = _stable_id(node_type, name.lower().strip())
+        if node_id not in self.nodes:
+            self.nodes[node_id] = KnowledgeNode(
+                node_id=node_id,
+                node_type=node_type,
+                name=name.strip(),
+                description=description.strip(),
+                metadata=metadata or {},
+            )
+        return node_id
+
+    def add_edge(
+        self,
+        source_id: str,
+        target_id: str,
+        edge_type: str,
+        evidence_chunk_id: str,
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        if edge_type not in EDGE_TYPES:
+            raise ValueError(f"Unsupported edge type: {edge_type}")
+        if source_id not in self.nodes or target_id not in self.nodes:
+            raise ValueError("Edge references unknown node ids.")
+        edge_id = _stable_id(edge_type, f"{source_id}|{target_id}|{evidence_chunk_id}")
+        if any(edge.edge_id == edge_id for edge in self.edges):
+            return edge_id
+        self.edges.append(
+            KnowledgeEdge(
+                edge_id=edge_id,
+                source_id=source_id,
+                target_id=target_id,
+                edge_type=edge_type,
+                evidence_chunk_id=evidence_chunk_id,
+                metadata=metadata or {},
+            )
+        )
+        return edge_id
+
+    def map_chunk_concepts(self, chunk_id: str, concept_ids: list[str]) -> None:
+        unique_ids = sorted({item for item in concept_ids if item in self.nodes})
+        self.chunk_concepts[chunk_id] = unique_ids
+
+    def concepts_for_chunks(self, chunk_ids: list[str]) -> list[str]:
+        concept_ids: set[str] = set()
+        for chunk_id in chunk_ids:
+            concept_ids.update(self.chunk_concepts.get(chunk_id, []))
+        return sorted(concept_ids)
+
+    def resolve_concept_ids(self, text: str, max_results: int = 8) -> list[str]:
+        lowered = text.lower()
+        matches: list[str] = []
+        for node in self.nodes.values():
+            if node.node_type not in {"Concept", "Entity", "Formula"}:
+                continue
+            name = node.name.lower()
+            if name and (name in lowered or lowered in name):
+                matches.append(node.node_id)
+        return sorted(set(matches))[:max_results]
+
+    def subgraph(self, seed_node_ids: list[str], hops: int = 1, max_nodes: int = 80) -> dict[str, list[dict]]:
+        if hops < 0:
+            raise ValueError("hops must be >= 0")
+        if not seed_node_ids:
+            return {"nodes": [], "edges": []}
+
+        frontier = [node_id for node_id in seed_node_ids if node_id in self.nodes]
+        visited = set(frontier)
+        sub_edges: list[KnowledgeEdge] = []
+        remaining_hops = hops
+        while frontier and remaining_hops > 0 and len(visited) < max_nodes:
+            next_frontier: list[str] = []
+            for edge in self.edges:
+                source_in = edge.source_id in frontier
+                target_in = edge.target_id in frontier
+                if not source_in and not target_in:
+                    continue
+                sub_edges.append(edge)
+                if source_in and edge.target_id not in visited and len(visited) < max_nodes:
+                    visited.add(edge.target_id)
+                    next_frontier.append(edge.target_id)
+                if target_in and edge.source_id not in visited and len(visited) < max_nodes:
+                    visited.add(edge.source_id)
+                    next_frontier.append(edge.source_id)
+            frontier = next_frontier
+            remaining_hops -= 1
+
+        node_payload = [asdict(self.nodes[node_id]) for node_id in sorted(visited)]
+        edge_payload = [asdict(edge) for edge in sorted(sub_edges, key=lambda item: item.edge_id)]
+        return {"nodes": node_payload, "edges": edge_payload}
+
+    def save(self, graph_path: str) -> None:
+        path = Path(graph_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "version": 1,
+            "nodes": [asdict(node) for node in sorted(self.nodes.values(), key=lambda item: item.node_id)],
+            "edges": [asdict(edge) for edge in sorted(self.edges, key=lambda item: item.edge_id)],
+            "chunk_concepts": self.chunk_concepts,
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    @classmethod
+    def load(cls, graph_path: str) -> "KnowledgeGraph":
+        path = Path(graph_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Knowledge graph file not found: {graph_path}")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        graph = cls()
+        for node_item in raw.get("nodes", []):
+            node = KnowledgeNode(**node_item)
+            graph.nodes[node.node_id] = node
+        for edge_item in raw.get("edges", []):
+            graph.edges.append(KnowledgeEdge(**edge_item))
+        graph.chunk_concepts = {
+            chunk_id: sorted(set(concepts))
+            for chunk_id, concepts in raw.get("chunk_concepts", {}).items()
+        }
+        return graph
+
+    def merge(self, other: "KnowledgeGraph") -> None:
+        for node_id, node in other.nodes.items():
+            if node_id not in self.nodes:
+                self.nodes[node_id] = node
+        existing_edge_ids = {edge.edge_id for edge in self.edges}
+        for edge in other.edges:
+            if edge.edge_id not in existing_edge_ids:
+                self.edges.append(edge)
+                existing_edge_ids.add(edge.edge_id)
+        for chunk_id, concept_ids in other.chunk_concepts.items():
+            merged = sorted(set(self.chunk_concepts.get(chunk_id, [])) | set(concept_ids))
+            self.chunk_concepts[chunk_id] = merged
+
+    def find_concepts(self, name_or_query: str, max_results: int = 8) -> list[str]:
+        keyword = name_or_query.lower().strip()
+        if not keyword:
+            return []
+        exact = [
+            node.node_id
+            for node in self.nodes.values()
+            if node.node_type in {"Concept", "Entity", "Formula"}
+            and node.name.lower() == keyword
+        ]
+        if exact:
+            return sorted(set(exact))[:max_results]
+        return self.resolve_concept_ids(name_or_query, max_results=max_results)
+
+
+def build_knowledge_graph(chunks: list[Chunk]) -> KnowledgeGraph:
+    graph = KnowledgeGraph()
+    for chunk in chunks:
+        schema = extract_chunk_schema(chunk.text)
+        concept_ids: list[str] = []
+
+        for concept in schema["concepts"]:
+            concept_ids.append(graph.add_node("Concept", concept))
+        for entity in schema["entities"]:
+            concept_ids.append(graph.add_node("Entity", entity))
+        for formula in schema["formulas"]:
+            concept_ids.append(graph.add_node("Formula", formula, description=formula))
+
+        for definition in schema["definitions"]:
+            term = definition["term"]
+            meaning = definition["definition"]
+            term_id = graph.add_node("Concept", term)
+            definition_id = graph.add_node("Definition", f"{term} definition", description=meaning)
+            graph.add_edge(term_id, definition_id, "related-to", evidence_chunk_id=chunk.chunk_id)
+            concept_ids.append(term_id)
+
+        for relation in schema["relations"]:
+            source_id = graph.add_node("Concept", relation["source"])
+            target_id = graph.add_node("Concept", relation["target"])
+            graph.add_edge(
+                source_id,
+                target_id,
+                relation["type"],
+                evidence_chunk_id=chunk.chunk_id,
+            )
+            concept_ids.extend([source_id, target_id])
+
+        graph.map_chunk_concepts(chunk.chunk_id, concept_ids)
+    return graph
+
+
+def extract_chunk_schema(text: str) -> dict[str, list]:
+    """Extract concept/entity/relation in a JSON-schema-like shape."""
+    concepts, entities = _extract_terms(text)
+    definitions = _extract_definitions(text)
+    formulas = _extract_formulas(text)
+    relations = _extract_relations(text, concepts=concepts, entities=entities)
+    return {
+        "concepts": concepts,
+        "entities": entities,
+        "definitions": definitions,
+        "formulas": formulas,
+        "relations": relations,
+    }
+
+
+def _extract_terms(text: str) -> tuple[list[str], list[str]]:
+    counts: dict[str, int] = {}
+    original_case: dict[str, str] = {}
+    for token in TOKEN_PATTERN.findall(text):
+        key = token.lower()
+        if key in _STOPWORDS or len(key) < 2:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        original_case.setdefault(key, token)
+
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    concepts: list[str] = []
+    entities: list[str] = []
+    for key, _ in ranked[:12]:
+        value = original_case[key]
+        if _looks_like_entity(value):
+            entities.append(value)
+        else:
+            concepts.append(value)
+    return concepts[:8], entities[:6]
+
+
+def _extract_definitions(text: str) -> list[dict[str, str]]:
+    definitions: list[dict[str, str]] = []
+    for pattern in _PATTERNS["is-a"]:
+        for match in pattern.finditer(text):
+            source = match.group("src").strip()
+            target = match.group("dst").strip()
+            if source.lower() in _STOPWORDS or target.lower() in _STOPWORDS:
+                continue
+            definitions.append({"term": source, "definition": target})
+    return _dedupe_dicts(definitions)
+
+
+def _extract_formulas(text: str) -> list[str]:
+    formulas: list[str] = []
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if "=" not in cleaned:
+            continue
+        if len(cleaned) > 120:
+            continue
+        if re.search(r"[A-Za-z\u4e00-\u9fff]", cleaned):
+            formulas.append(cleaned)
+    return sorted(set(formulas))[:8]
+
+
+def _extract_relations(text: str, concepts: list[str], entities: list[str]) -> list[dict[str, str]]:
+    relations: list[dict[str, str]] = []
+    for edge_type in ("is-a", "used-in", "derived-from"):
+        for pattern in _PATTERNS[edge_type]:
+            for match in pattern.finditer(text):
+                source = match.group("src").strip()
+                target = match.group("dst").strip()
+                if source.lower() in _STOPWORDS or target.lower() in _STOPWORDS:
+                    continue
+                relations.append({"source": source, "target": target, "type": edge_type})
+
+    known_terms = {term.lower(): term for term in [*concepts, *entities]}
+    sentences = re.split(r"[。.!?\n;；]+", text)
+    for sentence in sentences:
+        words = []
+        for token in TOKEN_PATTERN.findall(sentence):
+            lowered = token.lower()
+            if lowered in known_terms:
+                words.append(known_terms[lowered])
+        unique_words = _dedupe_list(words)
+        for idx in range(len(unique_words) - 1):
+            relations.append(
+                {
+                    "source": unique_words[idx],
+                    "target": unique_words[idx + 1],
+                    "type": "related-to",
+                }
+            )
+
+    return _dedupe_dicts(relations)
+
+
+def _looks_like_entity(text: str) -> bool:
+    if text.isupper():
+        return True
+    return bool(re.match(r"^[A-Z][A-Za-z0-9_-]{1,}$", text))
+
+
+def _stable_id(prefix: str, value: str) -> str:
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix.lower()}-{digest}"
+
+
+def _dedupe_list(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _dedupe_dicts(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[str] = set()
+    result: list[dict[str, str]] = []
+    for item in items:
+        key = "|".join([item.get("source", ""), item.get("target", ""), item.get("type", ""), item.get("term", ""), item.get("definition", "")]).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result

@@ -200,13 +200,36 @@ class HybridRetriever:
 
     def _sparse_search(self, query: str, top_k: int) -> list[SearchHit]:
         if self._bm25 is None:
-            return []
+            return self._sparse_search_fallback(query, top_k)
         tokens = _tokenize(query)
         scores = self._bm25.get_scores(tokens)
         indexed = sorted(enumerate(scores), key=lambda item: float(item[1]), reverse=True)
         hits: list[SearchHit] = []
         for idx, score in indexed[:top_k]:
             hits.append(SearchHit(score=float(score), chunk=self.chunks[idx]))
+        return hits
+
+    def _sparse_search_fallback(self, query: str, top_k: int) -> list[SearchHit]:
+        """Fallback sparse search when BM25 dependency is unavailable."""
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return []
+        query_set = set(query_tokens)
+        scored: list[tuple[int, float]] = []
+        for idx, chunk in enumerate(self.chunks):
+            chunk_tokens = _tokenize(chunk.text)
+            if not chunk_tokens:
+                continue
+            overlap = len(query_set.intersection(chunk_tokens))
+            if overlap <= 0:
+                continue
+            # lightweight lexical score: overlap normalized by query size
+            score = overlap / max(1, len(query_set))
+            scored.append((idx, float(score)))
+        ranked = sorted(scored, key=lambda item: item[1], reverse=True)
+        hits: list[SearchHit] = []
+        for idx, score in ranked[:top_k]:
+            hits.append(SearchHit(score=score, chunk=self.chunks[idx]))
         return hits
 
     def _rrf_fuse(self, dense_hits: list[SearchHit], sparse_hits: list[SearchHit], rrf_k: int) -> list[SearchHit]:
