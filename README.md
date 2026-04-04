@@ -141,8 +141,27 @@ Query → Embedding → Vector Search → Context Assembly → LLM Response
 
 ## 7. 务实开发路线（推荐）
 
-### Phase 1：最小闭环（MVP）
-- PDF → Chunk → Embedding → RAG 问答
+### Phase 1 技术路线（具体）
+
+**P1-1 文档解析（Ingestion）**
+- 输入：`*.md` / `*.txt` / `*.pdf`
+- 输出：统一 `Document` 结构（`id/source/text/metadata`）
+- 关键点：保留来源路径，后续用于答案引用
+
+**P1-2 文本切分（Chunking）**
+- 策略：固定窗口 + overlap（先务实，后续可替换 semantic chunking）
+- 输出：`Chunk` 结构（`chunk_id/document_id/text/start/end`）
+- 默认建议：`chunk_size=600`，`overlap=120`
+
+**P1-3 Embedding 与索引（Indexing）**
+- 先使用本地轻量 embedding（避免外部依赖，保证 MVP 可跑）
+- 通过余弦相似度进行 Top-K 检索
+- 输出：可持久化索引文件（JSON）
+
+**P1-4 RAG 问答（QA）**
+- 流程：`Query -> Embedding -> Top-K Retrieval -> Context Assembly -> Answer`
+- 输出：`answer + citations`（来源文档与片段）
+- 验收：问题答案可追溯到原文片段
 
 ### Phase 2：知识图谱增强
 - 目标：从“仅向量召回”升级为“向量 + 图谱联合检索”。
@@ -206,6 +225,13 @@ Query → Embedding → Vector Search → Context Assembly → LLM Response
 - 验收标准：
   - 系统能稳定输出“出题-作答-评估-复习推荐”闭环
   - 用户掌握度曲线可被持续记录和解释
+
+**目标：在本地完成一个可运行的端到端闭环，支持：**
+
+1. 导入文档（Markdown/TXT，PDF 可选）
+2. 自动切分为语义片段（chunk）
+3. 生成 embedding 并建立检索索引
+4. 基于检索上下文进行问答，并返回可追溯来源
 
 ---
 
