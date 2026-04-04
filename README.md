@@ -145,16 +145,67 @@ Query → Embedding → Vector Search → Context Assembly → LLM Response
 - PDF → Chunk → Embedding → RAG 问答
 
 ### Phase 2：知识图谱增强
-- 引入 concept-level KG
-- 打通 Graph-RAG 基础路径
+- 目标：从“仅向量召回”升级为“向量 + 图谱联合检索”。
+- 核心实现：
+  1. 抽取管线：`chunk -> LLM JSON schema extraction -> concept/entity/relation`。
+  2. 图模型落库（Neo4j）：
+     - Node：`Concept` `Entity` `Definition` `Formula`
+     - Edge：`related-to` `is-a` `derived-from` `used-in`
+  3. 建立 chunk 与图节点映射（`chunk_id <-> concept_id[]`），实现向量语义与图结构互跳。
+  4. Graph-RAG 检索链路：
+     - 先向量召回 top-k chunk
+     - 再定位相关 concept 节点并扩展 1~2 跳子图
+     - 合并上下文后生成答案
+- API 建议：
+  - `POST /kg/build`：按文档构建/增量更新图谱
+  - `GET /kg/subgraph`：按 query 或 concept 返回子图
+  - `POST /query/graph-rag`：执行 Graph-RAG 问答
+- 验收标准：
+  - 回答中可给出“文本证据 + 图谱关系证据”
+  - 对概念关系类问题优于纯向量 RAG
 
 ### Phase 3：Agent 调度
-- 引入 Planner / Retrieval / Graph / Evaluation 协同
+- 目标：实现可解释、可观测、可回退的多 Agent 编排。
+- 核心实现：
+  1. `Planner Agent`：识别问题类型（定义解释/关系推理/综合问答），选择执行策略。
+  2. `Retrieval Agent`：执行 hybrid search（Vector + BM25），返回候选证据。
+  3. `Graph Agent`：执行图路径扩展与关系压缩（子图摘要）。
+  4. `Evaluation Agent`：对答案做一致性检查、证据覆盖评分、置信度输出。
+  5. 编排与状态管理：
+     - 建议采用 `LangGraph`（或等价框架）定义状态机
+     - 统一 `run_id`、步骤日志、失败回退（例如降级到纯 RAG）
+- API 建议：
+  - `POST /agent/query`：启动一次 Agent 编排问答
+  - `GET /agent/runs/{run_id}`：查看执行轨迹（plan、tool calls、evidence）
+  - `POST /agent/runs/{run_id}/retry`：按策略重试
+- 验收标准：
+  - 每次回答都可追踪到执行路径和证据来源
+  - 编排失败时可自动降级并返回可用结果
 
 ### Phase 4：学习闭环
-- 自动出题
-- 用户建模
-- 自适应学习与反馈强化
+- 目标：从“会回答”升级为“能持续提升用户掌握度”。
+- 核心实现：
+  1. 自动出题服务：
+     - 以 `薄弱concept + 关联子图 + 原文chunk` 生成题目
+     - 题型覆盖：概念题/判断题/填空题/推导题
+  2. 用户知识状态建模（PostgreSQL）：
+     - `user_concept_state(user_id, concept_id, mastery, last_review_at, next_review_at)`
+     - `practice_record(question_id, answer, score, error_type, timestamp)`
+  3. 自适应调度：
+     - 基线使用 SM-2（spaced repetition）
+     - 可逐步替换为 BKT/DKT 等知识追踪模型
+  4. 批改与反馈：
+     - LLM + rubric 评分
+     - 错误归因：概念错误/推理错误/表达不完整
+     - 输出下一轮学习建议与推荐复习路径
+- API 建议：
+  - `POST /learning/plan`：生成个性化学习计划
+  - `POST /learning/session`：生成一组练习题
+  - `POST /learning/submit`：提交答案并返回评估与反馈
+  - `GET /learning/mastery-map`：返回用户概念掌握度图
+- 验收标准：
+  - 系统能稳定输出“出题-作答-评估-复习推荐”闭环
+  - 用户掌握度曲线可被持续记录和解释
 
 ---
 
