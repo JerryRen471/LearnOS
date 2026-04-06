@@ -6,8 +6,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from zhicore.phase2 import build_or_update_kg, query_graph_rag, query_subgraph
+from zhicore.phase4 import (
+    generate_learning_plan,
+    generate_learning_session,
+    get_mastery_map,
+    submit_learning_session,
+)
 
-app = FastAPI(title="ZhiCore API", version="0.2.0")
+app = FastAPI(title="ZhiCore API", version="0.4.0")
 
 
 class KGBuildRequest(BaseModel):
@@ -43,6 +49,33 @@ class GraphRAGRequest(BaseModel):
     embedding_provider: str = "auto"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     dense_backend: str = "auto"
+
+
+class LearningPlanRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
+    state_path: str = ".zhicore/learning_state.json"
+    max_concepts: int = Field(default=6, ge=1, le=20)
+
+
+class LearningSessionRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
+    state_path: str = ".zhicore/learning_state.json"
+    question_count: int = Field(default=6, ge=1, le=20)
+
+
+class LearningAnswerItem(BaseModel):
+    question_id: str
+    answer: str
+
+
+class LearningSubmitRequest(BaseModel):
+    user_id: str
+    session_id: str
+    answers: list[LearningAnswerItem]
+    graph_path: str = ".zhicore/graph.json"
+    state_path: str = ".zhicore/learning_state.json"
 
 
 @app.post("/kg/build")
@@ -128,3 +161,59 @@ def graph_rag_endpoint(payload: GraphRAGRequest) -> dict:
         ],
         "subgraph": result.subgraph,
     }
+
+
+@app.post("/learning/plan")
+def learning_plan_endpoint(payload: LearningPlanRequest) -> dict:
+    try:
+        return generate_learning_plan(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+            state_path=payload.state_path,
+            max_concepts=payload.max_concepts,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/session")
+def learning_session_endpoint(payload: LearningSessionRequest) -> dict:
+    try:
+        return generate_learning_session(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+            state_path=payload.state_path,
+            question_count=payload.question_count,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/submit")
+def learning_submit_endpoint(payload: LearningSubmitRequest) -> dict:
+    try:
+        return submit_learning_session(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            answers=[item.model_dump() for item in payload.answers],
+            graph_path=payload.graph_path,
+            state_path=payload.state_path,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/learning/mastery-map")
+def learning_mastery_map_endpoint(
+    user_id: str,
+    graph_path: str = ".zhicore/graph.json",
+    state_path: str = ".zhicore/learning_state.json",
+) -> dict:
+    try:
+        return get_mastery_map(
+            user_id=user_id,
+            graph_path=graph_path,
+            state_path=state_path,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
