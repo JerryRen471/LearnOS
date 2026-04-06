@@ -4,19 +4,20 @@
 
 ### Project overview
 
-LearnOS is an intelligent personal knowledge system powered by LLMs, RAG, and Knowledge Graphs. The project is Python-based (Python 3.12+).
+LearnOS (ZhiCore/CogniCore) is an intelligent personal knowledge system powered by LLMs, RAG, and Knowledge Graphs.
 
 ### Repository state
 
-- Python package source lives in `src/zhicore`.
-- Tests live in `tests`.
-- Packaging and test configuration are defined in `pyproject.toml`.
-- A CLI entrypoint exists: `zhicore = zhicore.cli:main`.
+- Source package: `src/zhicore`
+- Tests: `tests`
+- Project config: `pyproject.toml`
+- CLI entrypoint: `zhicore = zhicore.cli:main`
 
 ### Environment
 
 - **Python**: 3.12.3 is available system-wide.
-- **Dependency file**: `pyproject.toml` is the source of truth.
+- **Project requirement**: `requires-python = ">=3.10"` (from `pyproject.toml`).
+- **Dependency source of truth**: `pyproject.toml`.
 - **Services**: no external services are required for core local tests.
 
 ### Setup commands
@@ -24,12 +25,14 @@ LearnOS is an intelligent personal knowledge system powered by LLMs, RAG, and Kn
 - Install package + test dependencies: `python -m pip install -e ".[dev]"`
 - Install optional PDF support: `python -m pip install -e ".[pdf]"`
 - Install optional RAG stack: `python -m pip install -e ".[rag]"`
+- Install all cloud extras: `python -m pip install -e ".[cloud]"`
 
 ### Validation commands
 
 - Run focused tests: `pytest tests`
 - Run a specific test module when iterating: `pytest tests/test_pipeline.py`
-- Check CLI wiring: `python -m zhicore.cli --help`
+- Check CLI wiring (editable install): `python -m zhicore.cli --help`
+- Check CLI wiring (without install): `PYTHONPATH=src python -m zhicore.cli --help`
 
 ### Agent working notes
 
