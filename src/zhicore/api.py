@@ -1,4 +1,4 @@
-"""FastAPI endpoints for Phase 2 knowledge graph and Graph-RAG."""
+"""FastAPI endpoints for Phase 2/3 services."""
 
 from __future__ import annotations
 
@@ -6,8 +6,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from zhicore.phase2 import build_or_update_kg, query_graph_rag, query_subgraph
+from zhicore.phase3 import get_agent_run, retry_agent_run, run_agent_query
 
-app = FastAPI(title="ZhiCore API", version="0.2.0")
+app = FastAPI(title="ZhiCore API", version="0.3.0")
 
 
 class KGBuildRequest(BaseModel):
@@ -43,6 +44,30 @@ class GraphRAGRequest(BaseModel):
     embedding_provider: str = "auto"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     dense_backend: str = "auto"
+
+
+class AgentQueryRequest(BaseModel):
+    query: str
+    index_path: str = ".zhicore/index.json"
+    graph_path: str = ".zhicore/graph.json"
+    top_k: int = Field(default=4, ge=1, le=20)
+    dense_k: int = Field(default=12, ge=1, le=60)
+    sparse_k: int = Field(default=12, ge=1, le=60)
+    rrf_k: int = Field(default=60, ge=1, le=1000)
+    embedding_provider: str = "auto"
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    dense_backend: str = "auto"
+
+
+class AgentRetryRequest(BaseModel):
+    query: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    dense_k: int | None = Field(default=None, ge=1, le=60)
+    sparse_k: int | None = Field(default=None, ge=1, le=60)
+    rrf_k: int | None = Field(default=None, ge=1, le=1000)
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    dense_backend: str | None = None
 
 
 @app.post("/kg/build")
@@ -128,3 +153,52 @@ def graph_rag_endpoint(payload: GraphRAGRequest) -> dict:
         ],
         "subgraph": result.subgraph,
     }
+
+
+@app.post("/agent/query")
+def agent_query_endpoint(payload: AgentQueryRequest) -> dict:
+    try:
+        return run_agent_query(
+            query=payload.query,
+            index_path=payload.index_path,
+            graph_path=payload.graph_path,
+            top_k=payload.top_k,
+            dense_k=payload.dense_k,
+            sparse_k=payload.sparse_k,
+            rrf_k=payload.rrf_k,
+            embedding_provider=payload.embedding_provider,
+            embedding_model=payload.embedding_model,
+            dense_backend=payload.dense_backend,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/agent/runs/{run_id}")
+def get_agent_run_endpoint(run_id: str) -> dict:
+    try:
+        return get_agent_run(run_id=run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/agent/runs/{run_id}/retry")
+def retry_agent_run_endpoint(run_id: str, payload: AgentRetryRequest) -> dict:
+    try:
+        return retry_agent_run(
+            run_id=run_id,
+            query=payload.query,
+            top_k=payload.top_k,
+            dense_k=payload.dense_k,
+            sparse_k=payload.sparse_k,
+            rrf_k=payload.rrf_k,
+            embedding_provider=payload.embedding_provider,
+            embedding_model=payload.embedding_model,
+            dense_backend=payload.dense_backend,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
