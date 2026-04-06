@@ -15,6 +15,10 @@ from zhicore.rag import RAGEngine
 from zhicore.vector_store import HybridRetriever, InMemoryVectorStore
 
 
+def _now_iso() -> str:
+    return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
+
+
 def run_agent_query(
     query: str,
     index_path: str,
@@ -481,5 +485,3 @@ def _accepts_hybrid_kwargs(store: object) -> bool:
     return "hybrid" in klass
 
 
-def _now_iso() -> str:
-    return datetime.now(tz=UTC).replace(microsecond=0).isoformat()
