@@ -183,7 +183,9 @@ def _build_html(elements: list[dict], node_count: int, edge_count: int, scope: s
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
       color: #a6b6d8;
-      word-break: break-all;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: pre-wrap;
     }}
   </style>
   <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
