@@ -8,6 +8,7 @@ import json
 from zhicore.pipeline import ingest_documents, load_store
 from zhicore.phase2 import build_or_update_kg, query_graph_rag, query_subgraph
 from zhicore.rag import RAGEngine
+from zhicore.visualization import render_knowledge_graph_html
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -149,6 +150,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override dense backend for advanced indexes",
     )
     graph_ask_parser.add_argument("--json", action="store_true", help="Output JSON")
+
+    viz_parser = subparsers.add_parser(
+        "kg-visualize",
+        help="Render knowledge graph as interactive HTML",
+    )
+    viz_parser.add_argument("--graph-path", default=".zhicore/graph.json", help="Knowledge graph path")
+    viz_parser.add_argument(
+        "--output-path",
+        default=".zhicore/graph_visualization.html",
+        help="Visualization HTML output path",
+    )
+    viz_parser.add_argument("--concept", default=None, help="Seed concept name for focused subgraph view")
+    viz_parser.add_argument("--query", default=None, help="Query text for focused subgraph view")
+    viz_parser.add_argument("--hops", type=int, default=1, help="Expansion hops in focused mode")
+    viz_parser.add_argument("--max-nodes", type=int, default=180, help="Maximum nodes to render")
+    viz_parser.add_argument("--json", action="store_true", help="Output JSON summary")
     return parser
 
 
@@ -291,6 +308,27 @@ def main() -> None:
                     f"[{item.index}] {item.source} --{item.edge_type}--> {item.target} "
                     f"(chunk={item.evidence_chunk_id})"
                 )
+        return
+
+    if args.command == "kg-visualize":
+        result = render_knowledge_graph_html(
+            graph_path=args.graph_path,
+            output_path=args.output_path,
+            concept=args.concept,
+            query=args.query,
+            hops=args.hops,
+            max_nodes=args.max_nodes,
+        )
+        payload = {
+            "output_path": result["output_path"],
+            "nodes": result["nodes"],
+            "edges": result["edges"],
+        }
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False))
+            return
+        print(f"Visualization generated: {payload['output_path']}")
+        print(f"Nodes: {payload['nodes']}, Edges: {payload['edges']}")
         return
 
     raise RuntimeError(f"Unknown command: {args.command}")

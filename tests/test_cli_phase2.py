@@ -90,3 +90,44 @@ def test_cli_phase2_graph_ask_json(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "answer" in ask_payload
     assert ask_payload["text_evidence"]
     assert "graph_evidence" in ask_payload
+
+
+def test_cli_phase2_visualize(tmp_path: Path, monkeypatch, capsys) -> None:
+    source = tmp_path / "kg.md"
+    source.write_text("FastAPI is framework. RAG used in LearnOS.\n", encoding="utf-8")
+    graph_path = tmp_path / "graph.json"
+    index_path = tmp_path / "index.json"
+    output_path = tmp_path / "graph_viz.html"
+
+    _run_cli(
+        monkeypatch,
+        capsys,
+        [
+            "kg-build",
+            "--input",
+            str(source),
+            "--graph-path",
+            str(graph_path),
+            "--index-path",
+            str(index_path),
+            "--no-incremental",
+        ],
+    )
+    viz_output = _run_cli(
+        monkeypatch,
+        capsys,
+        [
+            "kg-visualize",
+            "--graph-path",
+            str(graph_path),
+            "--output-path",
+            str(output_path),
+            "--concept",
+            "FastAPI",
+            "--json",
+        ],
+    )
+    viz_payload = json.loads(viz_output)
+    assert Path(viz_payload["output_path"]).exists()
+    assert viz_payload["nodes"] > 0
+    assert viz_payload["edges"] >= 0
