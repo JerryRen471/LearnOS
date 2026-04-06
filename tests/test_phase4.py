@@ -1,9 +1,15 @@
 import json
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from zhicore.api import app
+from zhicore.api import (
+    LearningPlanRequest,
+    LearningSessionRequest,
+    LearningSubmitRequest,
+    learning_mastery_map_endpoint,
+    learning_plan_endpoint,
+    learning_session_endpoint,
+    learning_submit_endpoint,
+)
 from zhicore.phase2 import build_or_update_kg
 from zhicore.phase4 import (
     generate_learning_plan,
@@ -92,53 +98,41 @@ def test_learning_api_endpoints(tmp_path: Path) -> None:
         incremental=False,
     )
 
-    client = TestClient(app)
-    plan_resp = client.post(
-        "/learning/plan",
-        json={
-            "user_id": "u-api",
-            "graph_path": str(graph_path),
-            "state_path": str(state_path),
-            "max_concepts": 3,
-        },
+    plan_payload = learning_plan_endpoint(
+        LearningPlanRequest(
+            user_id="u-api",
+            graph_path=str(graph_path),
+            state_path=str(state_path),
+            max_concepts=3,
+        )
     )
-    assert plan_resp.status_code == 200
-    assert plan_resp.json()["focus_concepts"]
+    assert plan_payload["focus_concepts"]
 
-    session_resp = client.post(
-        "/learning/session",
-        json={
-            "user_id": "u-api",
-            "graph_path": str(graph_path),
-            "state_path": str(state_path),
-            "question_count": 3,
-        },
+    session_payload = learning_session_endpoint(
+        LearningSessionRequest(
+            user_id="u-api",
+            graph_path=str(graph_path),
+            state_path=str(state_path),
+            question_count=3,
+        )
     )
-    assert session_resp.status_code == 200
-    session_payload = session_resp.json()
     session_id = session_payload["session_id"]
     question_ids = [item["question_id"] for item in session_payload["questions"]]
 
-    submit_resp = client.post(
-        "/learning/submit",
-        json={
-            "user_id": "u-api",
-            "session_id": session_id,
-            "graph_path": str(graph_path),
-            "state_path": str(state_path),
-            "answers": [{"question_id": question_ids[0], "answer": "test"}],
-        },
+    submit_payload = learning_submit_endpoint(
+        LearningSubmitRequest(
+            user_id="u-api",
+            session_id=session_id,
+            graph_path=str(graph_path),
+            state_path=str(state_path),
+            answers=[{"question_id": question_ids[0], "answer": "test"}],
+        )
     )
-    assert submit_resp.status_code == 200
-    assert submit_resp.json()["results"]
+    assert submit_payload["results"]
 
-    mastery_resp = client.get(
-        "/learning/mastery-map",
-        params={
-            "user_id": "u-api",
-            "graph_path": str(graph_path),
-            "state_path": str(state_path),
-        },
+    mastery_payload = learning_mastery_map_endpoint(
+        user_id="u-api",
+        graph_path=str(graph_path),
+        state_path=str(state_path),
     )
-    assert mastery_resp.status_code == 200
-    assert mastery_resp.json()["concepts"]
+    assert mastery_payload["concepts"]
