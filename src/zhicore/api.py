@@ -1,14 +1,25 @@
-"""FastAPI endpoints for Phase 2/3 services."""
+"""FastAPI endpoints for Phase 2/3/4 services."""
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from zhicore.phase2 import build_or_update_kg, query_graph_rag, query_subgraph
 from zhicore.phase3 import get_agent_run, retry_agent_run, run_agent_query
+from zhicore.phase4 import create_learning_session, generate_learning_plan, get_mastery_map, submit_learning_answers
 
-app = FastAPI(title="ZhiCore API", version="0.3.0")
+app = FastAPI(title="ZhiCore API", version="0.4.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class KGBuildRequest(BaseModel):
@@ -68,6 +79,38 @@ class AgentRetryRequest(BaseModel):
     embedding_provider: str | None = None
     embedding_model: str | None = None
     dense_backend: str | None = None
+
+
+class LearningPlanRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
+    top_k: int = Field(default=6, ge=1, le=30)
+
+
+class LearningSessionRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
+    question_count: int = Field(default=6, ge=1, le=30)
+    question_types: list[Literal["concept", "judgement", "cloze", "derivation"]] = Field(
+        default_factory=lambda: ["concept", "judgement"],
+        min_length=1,
+    )
+
+
+class LearningSubmitAnswer(BaseModel):
+    question_id: str
+    answer: str
+
+
+class LearningSubmitRequest(BaseModel):
+    session_id: str
+    user_id: str
+    answers: list[LearningSubmitAnswer]
+
+
+class MasteryMapRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
 
 
 @app.post("/kg/build")
@@ -200,5 +243,55 @@ def retry_agent_run_endpoint(run_id: str, payload: AgentRetryRequest) -> dict:
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/plan")
+def learning_plan_endpoint(payload: LearningPlanRequest) -> dict:
+    try:
+        return generate_learning_plan(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+            top_k=payload.top_k,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/session")
+def learning_session_endpoint(payload: LearningSessionRequest) -> dict:
+    try:
+        return create_learning_session(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+            question_count=payload.question_count,
+            question_types=list(payload.question_types),
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/submit")
+def learning_submit_endpoint(payload: LearningSubmitRequest) -> dict:
+    try:
+        return submit_learning_answers(
+            session_id=payload.session_id,
+            user_id=payload.user_id,
+            answers=[item.model_dump() for item in payload.answers],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/mastery-map")
+def learning_mastery_map_endpoint(payload: MasteryMapRequest) -> dict:
+    try:
+        return get_mastery_map(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+        )
     except Exception as exc:  # pragma: no cover - framework wrapping
         raise HTTPException(status_code=400, detail=str(exc)) from exc

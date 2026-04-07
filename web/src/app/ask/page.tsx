@@ -3,8 +3,9 @@
 import { FormEvent, useMemo, useState } from "react";
 
 import { EmptyState, ErrorState, LoadingState, SuccessState } from "@/components/ui/states";
-import { useAgentQuery, useAgentRun, useGraphRagQuery } from "@/services/query/hooks";
+import { useAgentQuery, useAgentRun, useGraphRagQuery, useRetryAgentRun } from "@/services/query/hooks";
 import { useAskStore } from "@/stores/ask-store";
+import type { AgentRunResponse, GraphRagResponse } from "@/types/api";
 
 function AskModeSwitch() {
   const mode = useAskStore((state) => state.mode);
@@ -26,6 +27,13 @@ function AskModeSwitch() {
   );
 }
 
+function confidencePercent(confidence: number | undefined): number {
+  if (confidence === undefined || Number.isNaN(confidence)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(confidence * 100)));
+}
+
 export default function AskPage() {
   const mode = useAskStore((state) => state.mode);
   const isEvidencePanelOpen = useAskStore((state) => state.isEvidencePanelOpen);
@@ -36,58 +44,100 @@ export default function AskPage() {
   const setLatestRunId = useAskStore((state) => state.setLatestRunId);
 
   const [query, setQuery] = useState("FastAPI 和 LearnOS 的关系是什么？");
-  const [submittedQuery, setSubmittedQuery] = useState<string>("");
+  const [manualRunId, setManualRunId] = useState("");
+  const [submitted, setSubmitted] = useState(false);
 
-  const graphRagMutation = useGraphRagQuery(submittedQuery ? { query: submittedQuery } : null);
-  const agentMutation = useAgentQuery(submittedQuery ? { query: submittedQuery } : null);
+  const graphRagMutation = useGraphRagQuery(null);
+  const agentMutation = useAgentQuery(null);
+  const retryMutation = useRetryAgentRun(latestRunId);
   const agentRunQuery = useAgentRun(latestRunId);
 
-  const activeError = (graphRagMutation.error ?? agentMutation.error) as
+  const activeRun: AgentRunResponse | undefined =
+    agentRunQuery.data ?? retryMutation.data ?? agentMutation.data;
+  const activeGraph: GraphRagResponse | undefined = graphRagMutation.data;
+
+  const activeError = (graphRagMutation.error ?? agentMutation.error ?? retryMutation.error ?? agentRunQuery.error) as
     | { detail?: string; message?: string; code?: string }
     | undefined;
 
-  const activeResult = mode === "graph-rag" ? graphRagMutation.data : agentMutation.data;
+  const fallbackTriggered = Boolean(
+    activeRun?.fallback?.triggered ||
+      activeRun?.steps.some((step) => step.status === "failed_with_fallback"),
+  );
 
-  const evidenceCount = useMemo(() => {
-    if (!activeResult) {
-      return 0;
-    }
-    return activeResult.text_evidence.length + activeResult.graph_evidence.length;
-  }, [activeResult]);
+  const stepTimeline = useMemo(() => {
+    return (activeRun?.steps ?? []).map((step) => ({
+      ...step,
+      durationLabel:
+        step.started_at && step.finished_at
+          ? `${step.started_at} → ${step.finished_at}`
+          : "time unavailable",
+    }));
+  }, [activeRun]);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmedQuery = query.trim();
-    if (!trimmedQuery) {
+    const trimmed = query.trim();
+    if (!trimmed) {
       return;
     }
-    setSubmittedQuery(trimmedQuery);
+    setSubmitted(true);
 
     if (mode === "graph-rag") {
-      graphRagMutation.mutate({ query: trimmedQuery });
+      graphRagMutation.mutate({ query: trimmed, retrieval_mode: "hybrid", graph_hops: 1 });
       return;
     }
 
     agentMutation.mutate(
-      { query: trimmedQuery },
+      { query: trimmed },
       {
         onSuccess: (data) => {
           setLatestRunId(data.run_id);
+          setManualRunId(data.run_id);
         },
       },
     );
   };
 
+  const onRetry = () => {
+    if (!latestRunId) {
+      return;
+    }
+    retryMutation.mutate(
+      { query: query.trim() || undefined },
+      {
+        onSuccess: (data) => {
+          setLatestRunId(data.run_id);
+          setManualRunId(data.run_id);
+        },
+      },
+    );
+  };
+
+  const onLoadRun = () => {
+    const next = manualRunId.trim();
+    if (!next) {
+      return;
+    }
+    setLatestRunId(next);
+  };
+
+  const isLoading =
+    graphRagMutation.isPending ||
+    agentMutation.isPending ||
+    retryMutation.isPending ||
+    agentRunQuery.isFetching;
+
   return (
     <section className="page">
       <header className="page-header">
         <h2>Ask</h2>
-        <p>Query by Graph RAG or Agent workflow.</p>
+        <p>Graph-RAG / Agent mode with run timeline, retry and fallback UX.</p>
       </header>
 
       <AskModeSwitch />
 
-      <form onSubmit={submit} className="panel form-panel">
+      <form onSubmit={onSubmit} className="panel form-panel">
         <label htmlFor="ask-query" className="field-label">
           Query
         </label>
@@ -99,7 +149,7 @@ export default function AskPage() {
           placeholder="Ask a question..."
         />
         <div className="form-actions">
-          <button type="submit">Run</button>
+          <button type="submit">Submit</button>
           <button type="button" onClick={toggleEvidencePanel}>
             {isEvidencePanelOpen ? "Hide evidence" : "Show evidence"}
           </button>
@@ -109,57 +159,147 @@ export default function AskPage() {
         </div>
       </form>
 
-      {(graphRagMutation.isPending || agentMutation.isPending || agentRunQuery.isFetching) && (
-        <LoadingState message="Query is running..." />
+      {mode === "agent" && (
+        <section className="panel">
+          <h3>Run Lookup / Retry</h3>
+          <div className="inline-actions">
+            <input
+              value={manualRunId}
+              onChange={(event) => setManualRunId(event.target.value)}
+              placeholder="run_id"
+            />
+            <button type="button" onClick={onLoadRun}>
+              Load Run
+            </button>
+            <button type="button" onClick={onRetry} disabled={!latestRunId || retryMutation.isPending}>
+              Retry Run
+            </button>
+          </div>
+          {activeRun?.retry_of ? (
+            <p className="hint">
+              latest run_id: <strong>{activeRun.run_id}</strong> (retry_of: {activeRun.retry_of})
+            </p>
+          ) : (
+            latestRunId && (
+              <p className="hint">
+                latest run_id: <strong>{latestRunId}</strong>
+              </p>
+            )
+          )}
+        </section>
       )}
+
+      {isLoading && <LoadingState message="Running query..." />}
+
+      {!submitted && <EmptyState message="Select mode and submit a query." />}
 
       {activeError && (
-        <ErrorState
-          message={activeError.detail ?? activeError.message ?? "Unknown error when requesting backend."}
-        />
+        <ErrorState message={activeError.detail ?? activeError.message ?? "Request failed."} />
       )}
 
-      {!activeResult && !graphRagMutation.isPending && !agentMutation.isPending && (
-        <EmptyState message="Submit your query to view answer and evidence." />
+      {fallbackTriggered && (
+        <section className="panel warning-banner">
+          <h3>Fallback Activated</h3>
+          <p>
+            Agent run triggered fallback to RAG mode.
+            {activeRun?.fallback?.reason ? ` reason: ${activeRun.fallback.reason}` : ""}
+          </p>
+        </section>
       )}
 
-      {activeResult && (
+      {mode === "graph-rag" && activeGraph && (
         <div className="panel-stack">
           <section className="panel">
             <h3>Answer</h3>
-            <p>{activeResult.answer}</p>
-            <SuccessState message={`Answer returned with ${evidenceCount} evidence items.`} />
+            <p>{activeGraph.answer}</p>
+            <SuccessState
+              message={`Text evidence ${activeGraph.text_evidence.length}, graph evidence ${activeGraph.graph_evidence.length}.`}
+            />
           </section>
 
           {isEvidencePanelOpen && (
             <section className="panel">
-              <h3>Evidence</h3>
-              <ul>
-                {activeResult.text_evidence.map((item) => (
-                  <li key={`text-${item.index}`}>
-                    <strong>Text #{item.index}</strong> ({item.source}) - score {item.score.toFixed(3)}
-                  </li>
-                ))}
-                {activeResult.graph_evidence.map((item) => (
-                  <li key={`graph-${item.index}`}>
-                    <strong>Graph #{item.index}</strong> {item.source} -[{item.edge_type}]-&gt; {item.target}
+              <h3>Text Evidence</h3>
+              {activeGraph.text_evidence.length ? (
+                <ul>
+                  {activeGraph.text_evidence.map((item) => (
+                    <li key={`text-${item.index}`}>
+                      <strong>#{item.index}</strong> {item.source} | score {item.score.toFixed(3)}
+                      <div className="hint">{item.excerpt}</div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState message="No text evidence returned." />
+              )}
+
+              <h3>Graph Evidence</h3>
+              {activeGraph.graph_evidence.length ? (
+                <ul>
+                  {activeGraph.graph_evidence.map((item) => (
+                    <li key={`graph-${item.index}`}>
+                      <strong>#{item.index}</strong> {item.source} -[{item.edge_type}]-&gt; {item.target}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState message="No graph evidence returned." />
+              )}
+
+              <h3>Subgraph</h3>
+              <p>
+                nodes: {activeGraph.subgraph.nodes.length}, edges: {activeGraph.subgraph.edges.length}
+              </p>
+            </section>
+          )}
+        </div>
+      )}
+
+      {mode === "agent" && activeRun && (
+        <div className="panel-stack">
+          <section className="panel">
+            <h3>Agent Answer</h3>
+            <p>{activeRun.answer || "(empty answer)"}</p>
+
+            <h3>Evaluation</h3>
+            <p>
+              confidence: {(activeRun.evaluation?.confidence ?? 0).toFixed(3)} (
+              {activeRun.evaluation?.confidence_band ?? "unknown"})
+            </p>
+            <div className="confidence-bar">
+              <div
+                className="confidence-fill"
+                style={{ width: `${confidencePercent(activeRun.evaluation?.confidence)}%` }}
+              />
+            </div>
+          </section>
+
+          {isRunPanelOpen && (
+            <section className="panel">
+              <h3>Run Timeline</h3>
+              <p>
+                run_id: <strong>{activeRun.run_id}</strong> | status: {activeRun.status}
+              </p>
+              <p>
+                plan: {activeRun.plan?.query_type} / {activeRun.plan?.strategy}
+              </p>
+              <ul className="timeline-list">
+                {stepTimeline.map((step) => (
+                  <li key={`${step.name}-${step.started_at}`} className={`timeline-item status-${step.status}`}>
+                    <strong>{step.name}</strong> - {step.status}
+                    <div className="hint">{step.durationLabel}</div>
                   </li>
                 ))}
               </ul>
             </section>
           )}
 
-          {mode === "agent" && isRunPanelOpen && latestRunId && (
+          {activeRun.status === "failed" && (
             <section className="panel">
-              <h3>Latest Run: {latestRunId}</h3>
-              <p>Status: {agentRunQuery.data?.status ?? "loading"}</p>
-              <ul>
-                {(agentRunQuery.data?.steps ?? []).map((step) => (
-                  <li key={`${step.name}-${step.started_at}`}>
-                    <strong>{step.name}</strong>: {step.status}
-                  </li>
-                ))}
-              </ul>
+              <ErrorState message={activeRun.error ?? "Agent run failed."} />
+              <button type="button" onClick={onRetry}>
+                Retry Failed Run
+              </button>
             </section>
           )}
         </div>

@@ -33,15 +33,21 @@ export type GraphEvidence = {
 };
 
 export type SubgraphNode = {
-  id: string;
-  label?: string;
+  node_id?: string;
+  id?: string;
+  node_type?: string;
   type?: string;
+  name?: string;
+  label?: string;
   [key: string]: unknown;
 };
 
 export type SubgraphEdge = {
-  source: string;
-  target: string;
+  source_id?: string;
+  target_id?: string;
+  source?: string;
+  target?: string;
+  edge_type?: string;
   type?: string;
   [key: string]: unknown;
 };
@@ -170,7 +176,6 @@ export type KGSubgraphParams = {
   max_nodes?: number;
 };
 
-// Backend endpoints for learning/mastery are planned in issues, keep DTOs now.
 export type LearningPlanRequest = {
   user_id: string;
   graph_path: string;
@@ -183,10 +188,12 @@ export type LearningConcept = {
   mastery: number;
   next_review_at?: string;
   reason?: string;
+  due?: boolean;
 };
 
 export type LearningPlanResponse = {
   user_id: string;
+  generated_at?: string;
   recommended_concepts: LearningConcept[];
 };
 
@@ -202,10 +209,15 @@ export type LearningQuestion = {
   prompt: string;
   type: "concept" | "judgement" | "cloze" | "derivation";
   concept_id?: string;
+  concept_name?: string;
 };
 
 export type LearningSessionResponse = {
   session_id: string;
+  user_id: string;
+  question_count: number;
+  question_types: string[];
+  distribution?: Record<string, number>;
   questions: LearningQuestion[];
 };
 
@@ -222,12 +234,14 @@ export type LearningSubmitRequest = {
 
 export type LearningRecord = {
   question_id: string;
+  concept_id?: string;
   score: number;
-  error_type?: string;
+  error_type?: string | null;
   feedback?: string;
 };
 
 export type LearningSubmitResponse = {
+  session_id?: string;
   average_score: number;
   records: LearningRecord[];
   recommendation?: string;
@@ -250,6 +264,7 @@ export type MasteryConcept = {
   concept_name: string;
   mastery: number;
   due: boolean;
+  last_review_at?: string | null;
   next_review_at?: string;
 };
 

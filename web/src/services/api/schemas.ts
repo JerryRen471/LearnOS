@@ -1,16 +1,26 @@
 import { z } from "zod";
 
-const subgraphNodeSchema = z.object({
-  id: z.string(),
-  label: z.string().optional(),
-  type: z.string().optional(),
-}).passthrough();
+const subgraphNodeSchema = z
+  .object({
+    node_id: z.string().optional(),
+    id: z.string().optional(),
+    node_type: z.string().optional(),
+    type: z.string().optional(),
+    name: z.string().optional(),
+    label: z.string().optional(),
+  })
+  .passthrough();
 
-const subgraphEdgeSchema = z.object({
-  source: z.string(),
-  target: z.string(),
-  type: z.string().optional(),
-}).passthrough();
+const subgraphEdgeSchema = z
+  .object({
+    source_id: z.string().optional(),
+    target_id: z.string().optional(),
+    source: z.string().optional(),
+    target: z.string().optional(),
+    edge_type: z.string().optional(),
+    type: z.string().optional(),
+  })
+  .passthrough();
 
 export const subgraphSchema = z.object({
   nodes: z.array(subgraphNodeSchema),
@@ -99,10 +109,12 @@ export const learningConceptSchema = z.object({
   mastery: z.number(),
   next_review_at: z.string().optional(),
   reason: z.string().optional(),
+  due: z.boolean().optional(),
 });
 
 export const learningPlanResponseSchema = z.object({
   user_id: z.string(),
+  generated_at: z.string().optional(),
   recommended_concepts: z.array(learningConceptSchema),
 });
 
@@ -111,21 +123,28 @@ export const learningQuestionSchema = z.object({
   prompt: z.string(),
   type: z.enum(["concept", "judgement", "cloze", "derivation"]),
   concept_id: z.string().optional(),
+  concept_name: z.string().optional(),
 });
 
 export const learningSessionResponseSchema = z.object({
   session_id: z.string(),
+  user_id: z.string(),
+  question_count: z.number(),
+  question_types: z.array(z.string()),
+  distribution: z.record(z.string(), z.number()).optional(),
   questions: z.array(learningQuestionSchema),
 });
 
 export const learningRecordSchema = z.object({
   question_id: z.string(),
+  concept_id: z.string().optional(),
   score: z.number(),
-  error_type: z.string().optional(),
+  error_type: z.string().nullable().optional(),
   feedback: z.string().optional(),
 });
 
 export const learningSubmitResponseSchema = z.object({
+  session_id: z.string().optional(),
   average_score: z.number(),
   records: z.array(learningRecordSchema),
   recommendation: z.string().optional(),
@@ -143,6 +162,7 @@ export const masteryConceptSchema = z.object({
   concept_name: z.string(),
   mastery: z.number(),
   due: z.boolean(),
+  last_review_at: z.string().nullable().optional(),
   next_review_at: z.string().optional(),
 });
 

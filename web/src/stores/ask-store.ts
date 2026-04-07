@@ -18,6 +18,12 @@ type AskStoreState = {
 const STORAGE_KEY = "learnos-ask-store";
 let memoryState: PersistedAskState | null = null;
 
+declare global {
+  interface Window {
+    __LEARNOS_ASK_STATE__?: PersistedAskState;
+  }
+}
+
 type PersistedAskState = Pick<
   AskStoreState,
   "mode" | "isEvidencePanelOpen" | "isRunPanelOpen" | "latestRunId"
@@ -36,6 +42,11 @@ function readPersistedState(): PersistedAskState {
   }
   if (typeof window === "undefined") {
     return defaultPersistedState;
+  }
+
+  if (window.__LEARNOS_ASK_STATE__) {
+    memoryState = window.__LEARNOS_ASK_STATE__;
+    return window.__LEARNOS_ASK_STATE__;
   }
 
   const fromLocalStorage = readFromLocalStorage();
@@ -98,6 +109,7 @@ function writePersistedState(state: PersistedAskState): void {
   if (typeof window === "undefined") {
     return;
   }
+  window.__LEARNOS_ASK_STATE__ = state;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -113,9 +125,6 @@ function writePersistedState(state: PersistedAskState): void {
 
 export const useAskStore = create<AskStoreState>((set, get) => {
   const persisted = readPersistedState();
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-  }
 
   return {
     ...persisted,
