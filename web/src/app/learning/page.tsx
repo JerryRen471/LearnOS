@@ -7,6 +7,10 @@ import { useLearningPlan, useLearningSession, useLearningSubmit } from "@/servic
 import { useLearningStore } from "@/stores/learning-store";
 
 const DEFAULT_TYPES: Array<"concept" | "judgement" | "cloze" | "derivation"> = ["concept", "judgement"];
+const DRAFT_SANDBOX_QUESTIONS = [
+  { question_id: "draft-q1", prompt: "Define Graph RAG in one sentence.", type: "concept" },
+  { question_id: "draft-q2", prompt: "Explain when fallback should trigger.", type: "judgement" },
+];
 
 export default function LearningPage() {
   const sessionId = useLearningStore((state) => state.sessionId);
@@ -114,6 +118,30 @@ export default function LearningPage() {
 
       {!questions.length && !sessionMutation.isPending && (
         <EmptyState message="No question session yet. Start a session first." />
+      )}
+
+      {!questions.length && (
+        <section className="panel">
+          <h3>Draft Sandbox (Local)</h3>
+          <p className="hint">
+            This section validates local draft persistence without backend session APIs.
+          </p>
+          <ul>
+            {DRAFT_SANDBOX_QUESTIONS.map((question) => (
+              <li key={question.question_id} className="question-item">
+                <p>
+                  <strong>{question.type}</strong>: {question.prompt}
+                </p>
+                <textarea
+                  value={answerDrafts[question.question_id] ?? ""}
+                  onChange={(event) => setAnswerDraft(question.question_id, event.target.value)}
+                  rows={3}
+                  placeholder="Write local draft answer"
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {sessionMutation.isPending && <LoadingState message="Generating learning session..." />}
