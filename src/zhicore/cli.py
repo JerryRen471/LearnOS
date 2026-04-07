@@ -6,6 +6,12 @@ import argparse
 import json
 
 from zhicore.pipeline import ingest_documents, load_store
+from zhicore.phase4 import (
+    create_learning_plan,
+    create_learning_session,
+    get_learning_mastery_map,
+    submit_learning_answers,
+)
 from zhicore.rag import RAGEngine
 
 
@@ -67,6 +73,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override dense backend for advanced indexes",
     )
     ask_parser.add_argument("--json", action="store_true", help="Output JSON")
+
+    learning_plan_parser = subparsers.add_parser("learning-plan", help="Create personalized learning plan")
+    learning_plan_parser.add_argument("--user-id", required=True, help="User id")
+    learning_plan_parser.add_argument("--graph-path", default=".zhicore/graph.json", help="Knowledge graph path")
+    learning_plan_parser.add_argument(
+        "--max-concepts",
+        type=int,
+        default=8,
+        help="Maximum recommended concepts",
+    )
+
+    learning_session_parser = subparsers.add_parser("learning-session", help="Generate practice questions")
+    learning_session_parser.add_argument("--user-id", required=True, help="User id")
+    learning_session_parser.add_argument("--graph-path", default=".zhicore/graph.json", help="Knowledge graph path")
+    learning_session_parser.add_argument(
+        "--question-count",
+        type=int,
+        default=6,
+        help="Number of generated questions",
+    )
+    learning_session_parser.add_argument(
+        "--question-types",
+        nargs="+",
+        choices=["concept", "judgement", "cloze", "derivation"],
+        help="Question types to include",
+    )
+
+    learning_submit_parser = subparsers.add_parser("learning-submit", help="Submit answers for a learning session")
+    learning_submit_parser.add_argument("--user-id", required=True, help="User id")
+    learning_submit_parser.add_argument(
+        "--answers-json",
+        required=True,
+        help='JSON list, e.g. \'[{"question_id":"q1","answer":"..."}]\'',
+    )
+
+    learning_mastery_parser = subparsers.add_parser("learning-mastery-map", help="Get user mastery map")
+    learning_mastery_parser.add_argument("--user-id", required=True, help="User id")
     return parser
 
 
@@ -128,7 +171,58 @@ def main() -> None:
                 )
         return
 
+    if args.command == "learning-plan":
+        result = create_learning_plan(
+            user_id=args.user_id,
+            graph_path=args.graph_path,
+            max_concepts=args.max_concepts,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "learning-session":
+        result = create_learning_session(
+            user_id=args.user_id,
+            graph_path=args.graph_path,
+            question_count=args.question_count,
+            question_types=args.question_types,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "learning-submit":
+        answers = _parse_answers_json(args.answers_json)
+        result = submit_learning_answers(user_id=args.user_id, answers=answers)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
+    if args.command == "learning-mastery-map":
+        result = get_learning_mastery_map(user_id=args.user_id)
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
     raise RuntimeError(f"Unknown command: {args.command}")
+
+
+def _parse_answers_json(raw: str) -> list[dict[str, str]]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("answers-json must be a valid JSON list.") from exc
+    if not isinstance(payload, list):
+        raise ValueError("answers-json must be a JSON list.")
+
+    normalized: list[dict[str, str]] = []
+    for idx, item in enumerate(payload):
+        if not isinstance(item, dict):
+            raise ValueError(f"answers-json[{idx}] must be an object.")
+        normalized.append(
+            {
+                "question_id": str(item.get("question_id", "")),
+                "answer": str(item.get("answer", "")),
+            }
+        )
+    return normalized
 
 
 if __name__ == "__main__":
