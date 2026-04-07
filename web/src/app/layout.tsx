@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 import { NavShell } from "@/components/navigation/nav-shell";
+import { ToastHost } from "@/components/ui/toast-host";
 import { ReactQueryProvider } from "@/services/query/provider";
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default function RootLayout({
       <body>
         <ReactQueryProvider>
           <NavShell>{children}</NavShell>
+          <ToastHost />
         </ReactQueryProvider>
       </body>
     </html>

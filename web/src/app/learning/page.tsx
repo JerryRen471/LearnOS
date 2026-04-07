@@ -1,8 +1,10 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { EmptyState, ErrorState, LoadingState, SuccessState } from "@/components/ui/states";
+import { showToast } from "@/utils/toast-store";
 import { useLearningPlan, useLearningSession, useLearningSubmit, useMasteryMap } from "@/services/query/hooks";
 import { useLearningStore } from "@/stores/learning-store";
 
@@ -18,7 +20,8 @@ const SANDBOX_QUESTIONS = [
   { question_id: "sandbox-judgement", type: "judgement", prompt: "判断题草稿编辑（本地）" },
 ] as const;
 
-export default function LearningPage() {
+function LearningPageContent() {
+  const searchParams = useSearchParams();
   const sessionId = useLearningStore((state) => state.sessionId);
   const userId = useLearningStore((state) => state.userId);
   const graphPath = useLearningStore((state) => state.graphPath);
@@ -33,6 +36,7 @@ export default function LearningPage() {
   ]);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
   const [validationMessage, setValidationMessage] = useState<string>("");
+  const [conceptFocus, setConceptFocus] = useState<string>("");
 
   const planQuery = useLearningPlan({ user_id: userId, graph_path: graphPath, top_k: 8 });
   const masteryQuery = useMasteryMap({ user_id: userId, graph_path: graphPath });
@@ -57,6 +61,15 @@ export default function LearningPage() {
       .map((question) => question.question_id);
   }, [answerDrafts, questions]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- URL searchParams drive plan focus hint */
+  useEffect(() => {
+    const c = searchParams.get("concept");
+    if (c) {
+      setConceptFocus(c);
+    }
+  }, [searchParams]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   const onToggleType = (type: (typeof QUESTION_TYPES)[number]) => {
     setSelectedTypes((current) => {
       if (current.includes(type)) {
@@ -71,12 +84,14 @@ export default function LearningPage() {
 
     if (!selectedTypes.length) {
       setValidationMessage("至少选择一种题型。");
+      showToast({ title: "Session", detail: "至少选择一种题型。", variant: "info" });
       return;
     }
 
     const invalidTypes = selectedTypes.filter((type) => !QUESTION_TYPES.includes(type));
     if (invalidTypes.length) {
       setValidationMessage(`非法题型：${invalidTypes.join(", ")}`);
+      showToast({ title: "Session", detail: `非法题型：${invalidTypes.join(", ")}`, variant: "info" });
       return;
     }
 
@@ -102,11 +117,17 @@ export default function LearningPage() {
 
     if (!sessionMutation.data?.session_id) {
       setValidationMessage("请先生成 session。");
+      showToast({ title: "Submit", detail: "请先生成 session。", variant: "info" });
       return;
     }
 
     if (missingQuestionIds.length) {
       setValidationMessage(`以下题目未作答：${missingQuestionIds.join(", ")}`);
+      showToast({
+        title: "Submit",
+        detail: `以下题目未作答：${missingQuestionIds.join(", ")}`,
+        variant: "info",
+      });
       return;
     }
 
@@ -147,15 +168,22 @@ export default function LearningPage() {
           <ErrorState message={(planQuery.error as { detail?: string }).detail ?? "Plan request failed."} />
         )}
         {planQuery.data && (
-          <ul>
-            {planQuery.data.recommended_concepts.map((concept) => (
-              <li key={concept.concept_id}>
-                <strong>{concept.concept_name}</strong> | mastery: {concept.mastery.toFixed(3)} | next:
-                {" "}
-                {concept.next_review_at ?? "-"} | reason: {concept.reason ?? "-"}
-              </li>
-            ))}
-          </ul>
+          <>
+            {conceptFocus ? (
+              <p className="hint">
+                Focus from Knowledge: <strong>{conceptFocus}</strong> — check this concept in the list below.
+              </p>
+            ) : null}
+            <ul>
+              {planQuery.data.recommended_concepts.map((concept) => (
+                <li key={concept.concept_id}>
+                  <strong>{concept.concept_name}</strong> | mastery: {concept.mastery.toFixed(3)} | next:
+                  {" "}
+                  {concept.next_review_at ?? "-"} | reason: {concept.reason ?? "-"}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 
@@ -301,5 +329,13 @@ export default function LearningPage() {
         )}
       </section>
     </section>
+  );
+}
+
+export default function LearningPage() {
+  return (
+    <Suspense fallback={<LoadingState message="Loading Learning..." />}>
+      <LearningPageContent />
+    </Suspense>
   );
 }

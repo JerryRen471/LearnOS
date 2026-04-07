@@ -1,8 +1,11 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { EmptyState, ErrorState, LoadingState, SuccessState } from "@/components/ui/states";
+import { formatAgentTimeline } from "@/utils/agent-timeline";
+import { showToast } from "@/utils/toast-store";
 import { useAgentQuery, useAgentRun, useGraphRagQuery, useRetryAgentRun } from "@/services/query/hooks";
 import { useAskStore } from "@/stores/ask-store";
 import type { AgentRunResponse, GraphRagResponse } from "@/types/api";
@@ -34,7 +37,8 @@ function confidencePercent(confidence: number | undefined): number {
   return Math.max(0, Math.min(100, Math.round(confidence * 100)));
 }
 
-export default function AskPage() {
+function AskPageContent() {
+  const searchParams = useSearchParams();
   const mode = useAskStore((state) => state.mode);
   const isEvidencePanelOpen = useAskStore((state) => state.isEvidencePanelOpen);
   const isRunPanelOpen = useAskStore((state) => state.isRunPanelOpen);
@@ -46,6 +50,7 @@ export default function AskPage() {
   const [query, setQuery] = useState("FastAPI 和 LearnOS 的关系是什么？");
   const [manualRunId, setManualRunId] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const graphRagMutation = useGraphRagQuery(null);
   const agentMutation = useAgentQuery(null);
@@ -65,22 +70,30 @@ export default function AskPage() {
       activeRun?.steps.some((step) => step.status === "failed_with_fallback"),
   );
 
-  const stepTimeline = useMemo(() => {
-    return (activeRun?.steps ?? []).map((step) => ({
-      ...step,
-      durationLabel:
-        step.started_at && step.finished_at
-          ? `${step.started_at} → ${step.finished_at}`
-          : "time unavailable",
-    }));
-  }, [activeRun]);
+  const stepTimeline = useMemo(() => formatAgentTimeline(activeRun?.steps), [activeRun?.steps]);
+
+  // Sync textarea from URL when navigating from Knowledge (#32).
+  /* eslint-disable react-hooks/set-state-in-effect -- URL searchParams drive initial query text */
+  useEffect(() => {
+    const q = searchParams.get("query");
+    const c = searchParams.get("concept");
+    if (q) {
+      setQuery(q);
+    } else if (c) {
+      setQuery(`Explain the concept: ${c}`);
+    }
+  }, [searchParams]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) {
+      setFormError("Please enter a query before submitting.");
+      showToast({ title: "Validation", detail: "Query cannot be empty.", variant: "info" });
       return;
     }
+    setFormError("");
     setSubmitted(true);
 
     if (mode === "graph-rag") {
@@ -144,10 +157,15 @@ export default function AskPage() {
         <textarea
           id="ask-query"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            setFormError("");
+            setQuery(event.target.value);
+          }}
           rows={3}
           placeholder="Ask a question..."
+          aria-invalid={Boolean(formError)}
         />
+        {formError ? <p className="form-field-error">{formError}</p> : null}
         <div className="form-actions">
           <button type="submit">Submit</button>
           <button type="button" onClick={toggleEvidencePanel}>
@@ -305,5 +323,13 @@ export default function AskPage() {
         </div>
       )}
     </section>
+  );
+}
+
+export default function AskPage() {
+  return (
+    <Suspense fallback={<LoadingState message="Loading Ask..." />}>
+      <AskPageContent />
+    </Suspense>
   );
 }

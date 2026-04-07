@@ -30,6 +30,13 @@ export function useSubgraphQuery(params: KGSubgraphParams, enabled = true) {
   });
 }
 
+export function useSubgraphMutation() {
+  return useMutation({
+    mutationFn: (params: KGSubgraphParams) => api.getSubgraph(params),
+    mutationKey: ["kg-subgraph-mutation"],
+  });
+}
+
 export function useAgentQuery(payload: AgentQueryRequest | null) {
   return useMutation({
     mutationFn: (data: AgentQueryRequest) => api.queryAgent(data),
