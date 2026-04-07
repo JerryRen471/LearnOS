@@ -1,4 +1,4 @@
-"""FastAPI endpoints for Phase 2/3 services."""
+"""FastAPI endpoints for Phase 2/3/4 services."""
 
 from __future__ import annotations
 
@@ -7,8 +7,14 @@ from pydantic import BaseModel, Field
 
 from zhicore.phase2 import build_or_update_kg, query_graph_rag, query_subgraph
 from zhicore.phase3 import get_agent_run, retry_agent_run, run_agent_query
+from zhicore.phase4 import (
+    create_learning_plan,
+    create_learning_session,
+    get_learning_mastery_map,
+    submit_learning_answers,
+)
 
-app = FastAPI(title="ZhiCore API", version="0.3.0")
+app = FastAPI(title="ZhiCore API", version="0.4.0")
 
 
 class KGBuildRequest(BaseModel):
@@ -68,6 +74,29 @@ class AgentRetryRequest(BaseModel):
     embedding_provider: str | None = None
     embedding_model: str | None = None
     dense_backend: str | None = None
+
+
+class LearningPlanRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
+    max_concepts: int = Field(default=8, ge=1, le=50)
+
+
+class LearningSessionRequest(BaseModel):
+    user_id: str
+    graph_path: str = ".zhicore/graph.json"
+    question_count: int = Field(default=6, ge=1, le=60)
+    question_types: list[str] | None = None
+
+
+class LearningSubmitItem(BaseModel):
+    question_id: str
+    answer: str
+
+
+class LearningSubmitRequest(BaseModel):
+    user_id: str
+    answers: list[LearningSubmitItem]
 
 
 @app.post("/kg/build")
@@ -200,5 +229,58 @@ def retry_agent_run_endpoint(run_id: str, payload: AgentRetryRequest) -> dict:
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/plan")
+def learning_plan_endpoint(payload: LearningPlanRequest) -> dict:
+    try:
+        return create_learning_plan(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+            max_concepts=payload.max_concepts,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/session")
+def learning_session_endpoint(payload: LearningSessionRequest) -> dict:
+    if payload.question_types:
+        allowed = {"concept", "judgement", "cloze", "derivation"}
+        unknown = [item for item in payload.question_types if item not in allowed]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unsupported question_types: {unknown}")
+    try:
+        return create_learning_session(
+            user_id=payload.user_id,
+            graph_path=payload.graph_path,
+            question_count=payload.question_count,
+            question_types=payload.question_types,
+        )
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/learning/submit")
+def learning_submit_endpoint(payload: LearningSubmitRequest) -> dict:
+    if not payload.answers:
+        raise HTTPException(status_code=400, detail="answers must not be empty")
+    try:
+        return submit_learning_answers(
+            user_id=payload.user_id,
+            answers=[{"question_id": item.question_id, "answer": item.answer} for item in payload.answers],
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/learning/mastery-map")
+def learning_mastery_map_endpoint(user_id: str) -> dict:
+    try:
+        return get_learning_mastery_map(user_id=user_id)
     except Exception as exc:  # pragma: no cover - framework wrapping
         raise HTTPException(status_code=400, detail=str(exc)) from exc
