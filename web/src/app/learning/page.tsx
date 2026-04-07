@@ -39,7 +39,7 @@ export default function LearningPage() {
   const sessionMutation = useLearningSession();
   const submitMutation = useLearningSubmit();
 
-  const questions = sessionMutation.data?.questions ?? [];
+  const questions = useMemo(() => sessionMutation.data?.questions ?? [], [sessionMutation.data]);
 
   const selectedQuestion = useMemo(() => {
     if (!questions.length || !selectedQuestionId) {
