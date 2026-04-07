@@ -19,6 +19,7 @@ LearnOS (ZhiCore/CogniCore) is an intelligent personal knowledge system powered 
 - **Project requirement**: `requires-python = ">=3.10"` (from `pyproject.toml`).
 - **Dependency source of truth**: `pyproject.toml`.
 - **Services**: no external services are required for core local tests.
+- **Test runner**: `pytest` is provided via the `dev` extra (`.[dev]`) and is not assumed to be preinstalled.
 
 ### Setup commands
 
@@ -29,8 +30,9 @@ LearnOS (ZhiCore/CogniCore) is an intelligent personal knowledge system powered 
 
 ### Validation commands
 
-- Run focused tests: `pytest tests`
-- Run a specific test module when iterating: `pytest tests/test_pipeline.py`
+- Install test deps (once): `python3 -m pip install -e ".[dev]"`
+- Run focused tests: `python3 -m pytest tests`
+- Run a specific test module when iterating: `python3 -m pytest tests/test_pipeline.py`
 - Check CLI wiring (editable install): `python3 -m zhicore.cli --help`
 - Check CLI wiring (without install): `PYTHONPATH=src python3 -m zhicore.cli --help`
 
