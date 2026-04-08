@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from zhicore.embedding import Embedder, HashEmbedding, cosine_similarity
+from zhicore.domain.rag.interfaces import RetrievalParams
 from zhicore.types import Chunk, SearchHit
 
 
@@ -29,6 +31,9 @@ class InMemoryVectorStore:
         for chunk, embedding in zip(chunks, embeddings):
             self.records.append(VectorRecord(chunk=chunk, embedding=embedding))
         return len(chunks)
+
+    def retrieve(self, params: RetrievalParams) -> list[SearchHit]:
+        return self.search(query=params.query, top_k=params.top_k)
 
     def search(self, query: str, top_k: int = 4) -> list[SearchHit]:
         if top_k <= 0:
@@ -121,6 +126,16 @@ class HybridRetriever:
             raise ValueError("retrieval_mode must be one of: hybrid, dense, sparse")
         fused = self._rrf_fuse(dense_hits, sparse_hits, rrf_k=rrf_k)
         return fused[:top_k]
+
+    def retrieve(self, params: RetrievalParams) -> list[SearchHit]:
+        return self.search(
+            query=params.query,
+            top_k=params.top_k,
+            dense_k=params.dense_k,
+            sparse_k=params.sparse_k,
+            rrf_k=params.rrf_k,
+            retrieval_mode=params.retrieval_mode,
+        )
 
     def save(self, index_path: str) -> None:
         path = Path(index_path)

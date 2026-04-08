@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from zhicore.domain.rag.interfaces import RetrievalParams
 from zhicore.kg import KnowledgeGraph
 from zhicore.types import SearchHit
 from zhicore.vector_store import HybridRetriever, InMemoryVectorStore
@@ -56,17 +57,15 @@ class GraphRAGEngine:
         retrieval_mode: str = "hybrid",
         graph_hops: int = 1,
     ) -> GraphRAGResult:
-        search_params = {"query": query, "top_k": top_k}
-        if _accepts_hybrid_kwargs(self.store):
-            search_params.update(
-                {
-                    "dense_k": dense_k,
-                    "sparse_k": sparse_k,
-                    "rrf_k": rrf_k,
-                    "retrieval_mode": retrieval_mode,
-                }
-            )
-        hits = self.store.search(**search_params)
+        params = RetrievalParams(
+            query=query,
+            top_k=top_k,
+            dense_k=dense_k,
+            sparse_k=sparse_k,
+            rrf_k=rrf_k,
+            retrieval_mode=retrieval_mode,
+        )
+        hits = self.store.retrieve(params)
         text_evidence = self._build_text_evidence(hits)
 
         seed_concepts = self.graph.concepts_for_chunks([item.chunk_id for item in text_evidence])
@@ -138,8 +137,3 @@ class GraphRAGEngine:
         else:
             lines.append("图谱关系证据：未找到可用关系。")
         return "\n".join(lines)
-
-
-def _accepts_hybrid_kwargs(store: object) -> bool:
-    klass = store.__class__.__name__.lower()
-    return "hybrid" in klass
