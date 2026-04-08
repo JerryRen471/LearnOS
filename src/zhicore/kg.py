@@ -53,14 +53,59 @@ _STOPWORDS = {
     "系统",
 }
 
+_GENERIC_TERMS = {
+    "system",
+    "method",
+    "methods",
+    "result",
+    "results",
+    "paper",
+    "approach",
+    "model",
+    "models",
+    "algorithm",
+    "algorithms",
+    "framework",
+    "analysis",
+    "experiment",
+    "experiments",
+    "data",
+    "process",
+    "performance",
+    "effective",
+    "robust",
+    "general",
+    "introduction",
+    "conclusion",
+    "related",
+    "work",
+    "section",
+    "figure",
+    "table",
+    "example",
+    "examples",
+    "problem",
+    "problems",
+    "task",
+    "tasks",
+    "study",
+    "studies",
+    "support",
+    "using",
+}
+
 _EN_WORD = r"[A-Za-z][A-Za-z0-9_-]{1,40}"
 _ZH_WORD = r"[\u4e00-\u9fff]{2,20}"
 _WORD = rf"(?:{_EN_WORD}|{_ZH_WORD})"
 
 _PATTERNS = {
     "is-a": [
-        re.compile(rf"(?P<src>{_WORD})\s+is\s+(?:an?\s+)?(?P<dst>{_WORD})", re.IGNORECASE),
-        re.compile(rf"(?P<src>{_WORD})\s*是\s*(?P<dst>{_WORD})"),
+        re.compile(
+            rf"(?P<src>{_WORD})\s+is\s+(?:a|an)\s+(?:type|kind)\s+of\s+(?P<dst>{_WORD})",
+            re.IGNORECASE,
+        ),
+        re.compile(rf"(?P<src>{_WORD})\s+is\s+(?:a|an)\s+(?P<dst>{_WORD})", re.IGNORECASE),
+        re.compile(rf"(?P<src>{_WORD})\s*是\s*(?:一种|一类|一个)\s*(?P<dst>{_WORD})"),
     ],
     "used-in": [
         re.compile(rf"(?P<src>{_WORD})\s+used\s+in\s+(?P<dst>{_WORD})", re.IGNORECASE),
@@ -68,6 +113,15 @@ _PATTERNS = {
     ],
     "derived-from": [
         re.compile(rf"(?P<src>{_WORD})\s+derived\s+from\s+(?P<dst>{_WORD})", re.IGNORECASE),
+    ],
+    "related-to": [
+        re.compile(rf"(?P<src>{_WORD})\s+relate(?:d)?\s+to\s+(?P<dst>{_WORD})", re.IGNORECASE),
+        re.compile(rf"(?P<src>{_WORD})\s+associated\s+with\s+(?P<dst>{_WORD})", re.IGNORECASE),
+        re.compile(rf"(?P<src>{_WORD})\s+depends\s+on\s+(?P<dst>{_WORD})", re.IGNORECASE),
+        re.compile(rf"(?P<src>{_WORD})\s*相关(?:于|)\s*(?P<dst>{_WORD})"),
+        re.compile(rf"(?P<src>{_WORD})\s*关联(?:于|)\s*(?P<dst>{_WORD})"),
+        re.compile(rf"(?P<src>{_WORD})\s*依赖\s*(?P<dst>{_WORD})"),
+        re.compile(rf"(?P<src>{_WORD})\s*基于\s*(?P<dst>{_WORD})"),
     ],
 }
 
@@ -106,7 +160,7 @@ class KnowledgeGraph:
     ) -> str:
         if node_type not in NODE_TYPES:
             raise ValueError(f"Unsupported node type: {node_type}")
-        node_id = _stable_id(node_type, name.lower().strip())
+        node_id = _stable_id(node_type, _normalize_key(name))
         if node_id not in self.nodes:
             self.nodes[node_id] = KnowledgeNode(
                 node_id=node_id,
@@ -165,7 +219,13 @@ class KnowledgeGraph:
                 matches.append(node.node_id)
         return sorted(set(matches))[:max_results]
 
-    def subgraph(self, seed_node_ids: list[str], hops: int = 1, max_nodes: int = 80) -> dict[str, list[dict]]:
+    def subgraph(
+        self,
+        seed_node_ids: list[str],
+        hops: int = 1,
+        max_nodes: int = 80,
+        max_edges_per_node: int = 12,
+    ) -> dict[str, list[dict]]:
         if hops < 0:
             raise ValueError("hops must be >= 0")
         if not seed_node_ids:
@@ -174,20 +234,32 @@ class KnowledgeGraph:
         frontier = [node_id for node_id in seed_node_ids if node_id in self.nodes]
         visited = set(frontier)
         sub_edges: list[KnowledgeEdge] = []
+        edge_counts: dict[str, int] = {node_id: 0 for node_id in frontier}
         remaining_hops = hops
+        edge_priority = {"is-a": 0, "used-in": 1, "derived-from": 2, "related-to": 3}
         while frontier and remaining_hops > 0 and len(visited) < max_nodes:
             next_frontier: list[str] = []
-            for edge in self.edges:
+            edges_sorted = sorted(
+                self.edges,
+                key=lambda item: (edge_priority.get(item.edge_type, 9), item.edge_id),
+            )
+            for edge in edges_sorted:
                 source_in = edge.source_id in frontier
                 target_in = edge.target_id in frontier
                 if not source_in and not target_in:
                     continue
+                anchor = edge.source_id if source_in else edge.target_id
+                if edge_counts.get(anchor, 0) >= max_edges_per_node:
+                    continue
+                edge_counts[anchor] = edge_counts.get(anchor, 0) + 1
                 sub_edges.append(edge)
                 if source_in and edge.target_id not in visited and len(visited) < max_nodes:
                     visited.add(edge.target_id)
+                    edge_counts.setdefault(edge.target_id, 0)
                     next_frontier.append(edge.target_id)
                 if target_in and edge.source_id not in visited and len(visited) < max_nodes:
                     visited.add(edge.source_id)
+                    edge_counts.setdefault(edge.source_id, 0)
                     next_frontier.append(edge.source_id)
             frontier = next_frontier
             remaining_hops -= 1
@@ -206,6 +278,39 @@ class KnowledgeGraph:
             "chunk_concepts": self.chunk_concepts,
         }
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def stats(self, top_hubs: int = 12) -> dict[str, object]:
+        edge_type_counts: dict[str, int] = {}
+        degrees: dict[str, int] = {node_id: 0 for node_id in self.nodes}
+        for edge in self.edges:
+            edge_type_counts[edge.edge_type] = edge_type_counts.get(edge.edge_type, 0) + 1
+            degrees[edge.source_id] = degrees.get(edge.source_id, 0) + 1
+            degrees[edge.target_id] = degrees.get(edge.target_id, 0) + 1
+
+        hubs = sorted(degrees.items(), key=lambda item: (-item[1], item[0]))[: max(0, int(top_hubs))]
+        hub_payload: list[dict[str, object]] = []
+        for node_id, degree in hubs:
+            node = self.nodes.get(node_id)
+            if node is None:
+                continue
+            hub_payload.append(
+                {
+                    "node_id": node_id,
+                    "name": node.name,
+                    "node_type": node.node_type,
+                    "degree": degree,
+                }
+            )
+        total_edges = len(self.edges)
+        related_edges = int(edge_type_counts.get("related-to", 0))
+        related_ratio = round((related_edges / total_edges), 4) if total_edges else 0.0
+        return {
+            "nodes": len(self.nodes),
+            "edges": total_edges,
+            "edge_types": dict(sorted(edge_type_counts.items(), key=lambda item: (-item[1], item[0]))),
+            "related_to_ratio": related_ratio,
+            "top_hubs": hub_payload,
+        }
 
     @classmethod
     def load(cls, graph_path: str) -> "KnowledgeGraph":
@@ -308,8 +413,12 @@ def _extract_terms(text: str) -> tuple[list[str], list[str]]:
     counts: dict[str, int] = {}
     original_case: dict[str, str] = {}
     for token in TOKEN_PATTERN.findall(text):
-        key = token.lower()
-        if key in _STOPWORDS or len(key) < 2:
+        key = _normalize_key(token)
+        if not key:
+            continue
+        if key in _STOPWORDS or key in _GENERIC_TERMS:
+            continue
+        if _is_low_signal_term(key):
             continue
         counts[key] = counts.get(key, 0) + 1
         original_case.setdefault(key, token)
@@ -358,27 +467,35 @@ def _extract_relations(text: str, concepts: list[str], entities: list[str]) -> l
             for match in pattern.finditer(text):
                 source = match.group("src").strip()
                 target = match.group("dst").strip()
-                if source.lower() in _STOPWORDS or target.lower() in _STOPWORDS:
+                source_key = _normalize_key(source)
+                target_key = _normalize_key(target)
+                if not source_key or not target_key:
+                    continue
+                if (
+                    source_key in _STOPWORDS
+                    or target_key in _STOPWORDS
+                    or source_key in _GENERIC_TERMS
+                    or target_key in _GENERIC_TERMS
+                ):
                     continue
                 relations.append({"source": source, "target": target, "type": edge_type})
 
-    known_terms = {term.lower(): term for term in [*concepts, *entities]}
-    sentences = re.split(r"[。.!?\n;；]+", text)
-    for sentence in sentences:
-        words = []
-        for token in TOKEN_PATTERN.findall(sentence):
-            lowered = token.lower()
-            if lowered in known_terms:
-                words.append(known_terms[lowered])
-        unique_words = _dedupe_list(words)
-        for idx in range(len(unique_words) - 1):
-            relations.append(
-                {
-                    "source": unique_words[idx],
-                    "target": unique_words[idx + 1],
-                    "type": "related-to",
-                }
-            )
+    for pattern in _PATTERNS["related-to"]:
+        for match in pattern.finditer(text):
+            source = match.group("src").strip()
+            target = match.group("dst").strip()
+            source_key = _normalize_key(source)
+            target_key = _normalize_key(target)
+            if not source_key or not target_key:
+                continue
+            if (
+                source_key in _STOPWORDS
+                or target_key in _STOPWORDS
+                or source_key in _GENERIC_TERMS
+                or target_key in _GENERIC_TERMS
+            ):
+                continue
+            relations.append({"source": source, "target": target, "type": "related-to"})
 
     return _dedupe_dicts(relations)
 
@@ -392,6 +509,31 @@ def _looks_like_entity(text: str) -> bool:
 def _stable_id(prefix: str, value: str) -> str:
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:12]
     return f"{prefix.lower()}-{digest}"
+
+
+def _normalize_key(text: str) -> str:
+    cleaned = text.strip().strip("“”\"'`.,;:()[]{}<>")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.replace("_", "-")
+    cleaned = cleaned.lower()
+    cleaned = cleaned.strip("-")
+    if not cleaned:
+        return ""
+    if re.fullmatch(r"[0-9._-]+", cleaned):
+        return ""
+    if cleaned.endswith("s") and len(cleaned) > 3 and cleaned[-2].isalpha():
+        cleaned = cleaned[:-1]
+    return cleaned
+
+
+def _is_low_signal_term(normalized: str) -> bool:
+    if len(normalized) < 3 and re.fullmatch(r"[a-z0-9-]+", normalized):
+        return True
+    if "-" in normalized and len(normalized.replace("-", "")) < 3:
+        return True
+    if sum(ch.isalpha() for ch in normalized) == 0 and sum("\u4e00" <= ch <= "\u9fff" for ch in normalized) == 0:
+        return True
+    return False
 
 
 def _dedupe_list(items: list[str]) -> list[str]:
