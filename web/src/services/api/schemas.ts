@@ -93,6 +93,21 @@ export const kgBuildResponseSchema = z.object({
   edges: z.number(),
 });
 
+export const kgStatsHubSchema = z.object({
+  node_id: z.string(),
+  name: z.string(),
+  node_type: z.string(),
+  degree: z.number(),
+});
+
+export const kgStatsResponseSchema = z.object({
+  nodes: z.number(),
+  edges: z.number(),
+  edge_types: z.record(z.string(), z.number()),
+  related_to_ratio: z.number(),
+  top_hubs: z.array(kgStatsHubSchema),
+});
+
 export const learningConceptSchema = z.object({
   concept_id: z.string(),
   concept_name: z.string(),

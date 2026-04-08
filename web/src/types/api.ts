@@ -51,6 +51,21 @@ export type SubgraphData = {
   edges: SubgraphEdge[];
 };
 
+export type KGHubNode = {
+  node_id: string;
+  name: string;
+  node_type: string;
+  degree: number;
+};
+
+export type KGStatsResponse = {
+  nodes: number;
+  edges: number;
+  edge_types: Record<string, number>;
+  related_to_ratio: number;
+  top_hubs: KGHubNode[];
+};
+
 export type GraphRagRequest = {
   query: string;
   index_path?: string;
