@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from zhicore.application.kg_service import kg_stats as _kg_stats
+from zhicore.application.kg_service import query_subgraph as _query_subgraph
+from zhicore.application.query_service import query_graph_rag as _query_graph_rag
 
-from zhicore.chunking import chunk_documents
-from zhicore.graph_rag import GraphRAGEngine, GraphRAGResult
-from zhicore.kg import KnowledgeGraph, build_knowledge_graph
-from zhicore.pipeline import _build_embedder, _read_index_meta, load_store
-from zhicore.types import Chunk
-from zhicore.vector_store import HybridRetriever, InMemoryVectorStore
-from zhicore.ingest import ingest_inputs
+from zhicore.pipeline import load_store
 
 
 def build_or_update_kg(
@@ -24,26 +20,47 @@ def build_or_update_kg(
     dense_backend: str = "cosine",
     incremental: bool = True,
 ) -> dict[str, int]:
-    documents = ingest_inputs(inputs)
-    chunks = chunk_documents(documents, chunk_size=chunk_size, overlap=overlap)
-    if not chunks:
-        raise ValueError("No chunks generated from inputs.")
+    from zhicore.application.kg_service import build_or_update_kg as _build_or_update_kg
 
-    _upsert_index(
-        chunks=chunks,
-        index_path=index_path,
+    def _index_upsert(chunks):
+        # Preserve the pre-refactor Phase 2 behavior: always rebuild/persist a HybridRetriever
+        # index from chunks, merging with existing chunks when incremental=True and index exists.
+        from pathlib import Path
+
+        from zhicore.pipeline import _build_embedder, _read_index_meta
+        from zhicore.vector_store import HybridRetriever
+
+        combined = list(chunks)
+        provider = embedding_provider
+        backend = dense_backend
+        path = Path(index_path)
+        if incremental and path.exists():
+            meta = _read_index_meta(index_path)
+            provider = str(meta.get("embedder", embedding_provider))
+            backend = str(meta.get("dense_backend", dense_backend))
+            existing_store = load_store(
+                index_path=index_path,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                dense_backend=dense_backend,
+            )
+            existing_chunks = list(getattr(existing_store, "chunks", []))
+            existing_map = {c.chunk_id: c for c in existing_chunks}
+            for c in chunks:
+                existing_map[c.chunk_id] = c
+            combined = list(existing_map.values())
+
+        embedder = _build_embedder(embedding_provider=provider, embedding_model=embedding_model)
+        HybridRetriever(chunks=combined, embedder=embedder, dense_backend=backend).save(index_path=index_path)
+
+    return _build_or_update_kg(
+        inputs=inputs,
+        graph_path=graph_path,
+        index_upsert=_index_upsert,
+        chunk_size=chunk_size,
+        overlap=overlap,
         incremental=incremental,
-        embedding_provider=embedding_provider,
-        embedding_model=embedding_model,
-        dense_backend=dense_backend,
     )
-    graph = _upsert_graph(chunks=chunks, graph_path=graph_path, incremental=incremental)
-    return {
-        "documents": len(documents),
-        "chunks": len(chunks),
-        "nodes": len(graph.nodes),
-        "edges": len(graph.edges),
-    }
 
 
 def query_subgraph(
@@ -53,14 +70,17 @@ def query_subgraph(
     hops: int = 1,
     max_nodes: int = 80,
 ) -> dict[str, list[dict]]:
-    graph = KnowledgeGraph.load(graph_path)
-    seed = graph.find_concepts(concept or query or "", max_results=12)
-    return graph.subgraph(seed_node_ids=seed, hops=hops, max_nodes=max_nodes)
+    return _query_subgraph(
+        graph_path=graph_path,
+        query=query,
+        concept=concept,
+        hops=hops,
+        max_nodes=max_nodes,
+    )
 
 
 def kg_stats(graph_path: str) -> dict:
-    graph = KnowledgeGraph.load(graph_path)
-    return graph.stats()
+    return _kg_stats(graph_path=graph_path)
 
 
 def query_graph_rag(
@@ -77,70 +97,17 @@ def query_graph_rag(
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
     dense_backend: str = "auto",
 ) -> GraphRAGResult:
-    store = load_store(
-        index_path=index_path,
-        embedding_provider=embedding_provider,
-        embedding_model=embedding_model,
-        dense_backend=dense_backend,
-    )
-    graph = KnowledgeGraph.load(graph_path)
-    engine = GraphRAGEngine(store=store, graph=graph)
-    return engine.ask(
+    return _query_graph_rag(
         query=query,
+        index_path=index_path,
+        graph_path=graph_path,
         top_k=top_k,
         dense_k=dense_k,
         sparse_k=sparse_k,
         rrf_k=rrf_k,
         retrieval_mode=retrieval_mode,
         graph_hops=graph_hops,
-    )
-
-
-def _upsert_graph(chunks: list[Chunk], graph_path: str, incremental: bool) -> KnowledgeGraph:
-    new_graph = build_knowledge_graph(chunks)
-    path = Path(graph_path)
-    if incremental and path.exists():
-        current = KnowledgeGraph.load(graph_path)
-        current.merge(new_graph)
-        current.save(graph_path)
-        return current
-    new_graph.save(graph_path)
-    return new_graph
-
-
-def _upsert_index(
-    chunks: list[Chunk],
-    index_path: str,
-    incremental: bool,
-    embedding_provider: str,
-    embedding_model: str,
-    dense_backend: str,
-) -> None:
-    combined_chunks = chunks
-    provider = embedding_provider
-    backend = dense_backend
-    path = Path(index_path)
-    if incremental and path.exists():
-        existing_store = load_store(index_path=index_path)
-        existing_chunks = _extract_chunks(existing_store)
-        existing_map = {chunk.chunk_id: chunk for chunk in existing_chunks}
-        for chunk in chunks:
-            existing_map[chunk.chunk_id] = chunk
-        combined_chunks = list(existing_map.values())
-
-        meta = _read_index_meta(index_path)
-        provider = str(meta.get("embedder", embedding_provider))
-        backend = str(meta.get("dense_backend", dense_backend))
-
-    embedder = _build_embedder(
-        embedding_provider=provider,
+        embedding_provider=embedding_provider,
         embedding_model=embedding_model,
+        dense_backend=dense_backend,
     )
-    retriever = HybridRetriever(chunks=combined_chunks, embedder=embedder, dense_backend=backend)
-    retriever.save(index_path=index_path)
-
-
-def _extract_chunks(store: InMemoryVectorStore | HybridRetriever) -> list[Chunk]:
-    if isinstance(store, HybridRetriever):
-        return list(store.chunks)
-    return [record.chunk for record in store.records]
