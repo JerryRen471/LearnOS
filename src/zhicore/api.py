@@ -6,7 +6,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from zhicore.phase2 import build_or_update_kg, query_graph_rag, query_subgraph
+from zhicore.application.kg_service import build_or_update_kg, kg_stats, query_subgraph
+from zhicore.application.query_service import query_graph_rag
 from zhicore.phase3 import get_agent_run, retry_agent_run, run_agent_query
 
 app = FastAPI(title="ZhiCore API", version="0.3.0")
@@ -121,8 +122,6 @@ def get_subgraph(
 @app.get("/kg/stats")
 def get_kg_stats(graph_path: str = ".zhicore/graph.json") -> dict:
     try:
-        from zhicore.phase2 import kg_stats
-
         return kg_stats(graph_path=graph_path)
     except Exception as exc:  # pragma: no cover - framework wrapping
         raise HTTPException(status_code=400, detail=str(exc)) from exc
