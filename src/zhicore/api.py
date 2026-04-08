@@ -108,6 +108,16 @@ def get_subgraph(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/kg/stats")
+def get_kg_stats(graph_path: str = ".zhicore/graph.json") -> dict:
+    try:
+        from zhicore.phase2 import kg_stats
+
+        return kg_stats(graph_path=graph_path)
+    except Exception as exc:  # pragma: no cover - framework wrapping
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/query/graph-rag")
 def graph_rag_endpoint(payload: GraphRAGRequest) -> dict:
     if payload.retrieval_mode not in {"hybrid", "dense", "sparse"}:

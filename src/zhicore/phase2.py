@@ -58,6 +58,11 @@ def query_subgraph(
     return graph.subgraph(seed_node_ids=seed, hops=hops, max_nodes=max_nodes)
 
 
+def kg_stats(graph_path: str) -> dict:
+    graph = KnowledgeGraph.load(graph_path)
+    return graph.stats()
+
+
 def query_graph_rag(
     query: str,
     index_path: str,
