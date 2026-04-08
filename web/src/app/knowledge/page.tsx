@@ -3,26 +3,28 @@
 import { FormEvent, useMemo, useState } from "react";
 
 import { EmptyState, ErrorState, LoadingState, SuccessState } from "@/components/ui/states";
-import { useGraphRagQuery, useKgStatsQuery, useSubgraphQuery } from "@/services/query/hooks";
+import { useGraphRagQuery, useKgStats, useSubgraphQuery } from "@/services/query/hooks";
 
 export default function KnowledgePage() {
   const [term, setTerm] = useState("线性空间");
   const [submitted, setSubmitted] = useState<string>("");
   const [subgraphMode, setSubgraphMode] = useState<"query" | "concept">("concept");
+  const graphPath = ".zhicore/graph.json";
+  const indexPath = ".zhicore/index.json";
 
-  const statsQuery = useKgStatsQuery();
+  const statsQuery = useKgStats(graphPath, true);
   const subgraphParams = useMemo(() => {
     const trimmed = submitted.trim();
     if (!trimmed) {
-      return { hops: 1, max_nodes: 80 };
+      return { graph_path: graphPath, hops: 1, max_nodes: 80 };
     }
     return subgraphMode === "concept"
-      ? { concept: trimmed, hops: 1, max_nodes: 80 }
-      : { query: trimmed, hops: 1, max_nodes: 80 };
-  }, [submitted, subgraphMode]);
+      ? { graph_path: graphPath, concept: trimmed, hops: 1, max_nodes: 80 }
+      : { graph_path: graphPath, query: trimmed, hops: 1, max_nodes: 80 };
+  }, [submitted, subgraphMode, graphPath]);
   const subgraphQuery = useSubgraphQuery(subgraphParams, Boolean(submitted));
 
-  const graphRagMutation = useGraphRagQuery(submitted ? { query: submitted } : null);
+  const graphRagMutation = useGraphRagQuery(submitted ? { query: submitted, graph_path: graphPath, index_path: indexPath } : null);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

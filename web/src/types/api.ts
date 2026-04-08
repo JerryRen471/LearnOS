@@ -33,16 +33,19 @@ export type GraphEvidence = {
 };
 
 export type SubgraphNode = {
-  id: string;
-  label?: string;
-  type?: string;
+  node_id: string;
+  node_type: string;
+  name: string;
+  description?: string;
   [key: string]: unknown;
 };
 
 export type SubgraphEdge = {
-  source: string;
-  target: string;
-  type?: string;
+  edge_id?: string;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  evidence_chunk_id?: string;
   [key: string]: unknown;
 };
 
