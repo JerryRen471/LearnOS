@@ -3,7 +3,7 @@
 import { FormEvent, useMemo, useState } from "react";
 
 import { EmptyState, ErrorState, LoadingState, SuccessState } from "@/components/ui/states";
-import { useGraphRagQuery, useKgStats, useSubgraphQuery } from "@/services/query/hooks";
+import { useBuildKg, useGraphRagQuery, useKgStats, useSubgraphQuery } from "@/services/query/hooks";
 
 export default function KnowledgePage() {
   const [term, setTerm] = useState("线性空间");
@@ -11,6 +11,7 @@ export default function KnowledgePage() {
   const [subgraphMode, setSubgraphMode] = useState<"query" | "concept">("concept");
   const graphPath = ".zhicore/graph.json";
   const indexPath = ".zhicore/index.json";
+  const defaultBuildInput = "data/Group Theory in Physics.pdf";
 
   const statsQuery = useKgStats(graphPath, true);
   const subgraphParams = useMemo(() => {
@@ -25,6 +26,7 @@ export default function KnowledgePage() {
   const subgraphQuery = useSubgraphQuery(subgraphParams, Boolean(submitted));
 
   const graphRagMutation = useGraphRagQuery(submitted ? { query: submitted, graph_path: graphPath, index_path: indexPath } : null);
+  const buildKgMutation = useBuildKg();
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -38,6 +40,15 @@ export default function KnowledgePage() {
   const nodes = subgraphQuery.data?.nodes ?? [];
   const edges = subgraphQuery.data?.edges ?? [];
   const relatedRatio = statsQuery.data?.related_to_ratio;
+
+  const anyError =
+    (statsQuery.error as { detail?: string } | undefined)?.detail ??
+    (subgraphQuery.error as { detail?: string } | undefined)?.detail ??
+    (graphRagMutation.error as { detail?: string } | undefined)?.detail ??
+    (buildKgMutation.error as { detail?: string } | undefined)?.detail ??
+    undefined;
+
+  const needsIndex = Boolean(anyError && anyError.includes("Index file not found"));
 
   return (
     <section className="page">
@@ -79,23 +90,48 @@ export default function KnowledgePage() {
             >
               Run Graph-RAG
             </button>
+            <button
+              type="button"
+              disabled={buildKgMutation.isPending}
+              onClick={() => {
+                buildKgMutation.mutate(
+                  {
+                    inputs: [defaultBuildInput],
+                    graph_path: graphPath,
+                    index_path: indexPath,
+                    incremental: false,
+                  },
+                  {
+                    onSuccess: () => {
+                      statsQuery.refetch();
+                      if (submitted) {
+                        subgraphQuery.refetch();
+                      }
+                    },
+                  },
+                );
+              }}
+            >
+              Build index+KG
+            </button>
           </div>
+          <p className="helper">
+            Default demo input: <code>{defaultBuildInput}</code> → writes <code>{indexPath}</code> and <code>{graphPath}</code>.
+          </p>
         </form>
       </section>
 
-      {(statsQuery.isFetching || subgraphQuery.isFetching || graphRagMutation.isPending) && (
+      {(statsQuery.isFetching || subgraphQuery.isFetching || graphRagMutation.isPending || buildKgMutation.isPending) && (
         <LoadingState message="Loading knowledge graph data..." />
       )}
 
-      {(statsQuery.error || subgraphQuery.error || graphRagMutation.error) && (
-        <ErrorState
-          message={
-            (statsQuery.error as { detail?: string })?.detail ??
-            (subgraphQuery.error as { detail?: string })?.detail ??
-            (graphRagMutation.error as { detail?: string })?.detail ??
-            "Unknown error."
-          }
-        />
+      {anyError && (
+        <>
+          <ErrorState message={anyError} />
+          {needsIndex && (
+            <SuccessState message="Tip: click “Build index+KG” first, then retry Graph-RAG." />
+          )}
+        </>
       )}
 
       {statsQuery.data && (

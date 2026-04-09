@@ -8,6 +8,7 @@ import type {
   AgentQueryRequest,
   AgentRetryRequest,
   GraphRagRequest,
+  KGBuildRequest,
   KGStatsResponse,
   KGSubgraphParams,
   LearningPlanRequest,
@@ -36,6 +37,13 @@ export function useKgStats(graphPath: string | undefined, enabled = true) {
     queryKey: ["kg-stats", graphPath ?? ""],
     queryFn: () => api.getKgStats(graphPath),
     enabled,
+  });
+}
+
+export function useBuildKg() {
+  return useMutation({
+    mutationFn: (payload: KGBuildRequest) => api.buildKg(payload),
+    mutationKey: ["kg-build"],
   });
 }
 
