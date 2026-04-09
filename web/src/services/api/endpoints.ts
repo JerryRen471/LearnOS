@@ -7,6 +7,7 @@ import type {
   KGBuildRequest,
   KGBuildResponse,
   KGSubgraphParams,
+  KGStatsResponse,
   LearningPlanRequest,
   LearningPlanResponse,
   LearningSessionRequest,
@@ -26,6 +27,7 @@ import {
   learningSessionResponseSchema,
   learningSubmitResponseSchema,
   masteryMapResponseSchema,
+  kgStatsResponseSchema,
   subgraphSchema,
 } from "@/services/api/schemas";
 import { request } from "@/services/api/client";
@@ -48,6 +50,15 @@ export const api = {
 
   getSubgraph: (params: KGSubgraphParams): Promise<SubgraphData> =>
     request({ method: "GET", path: buildSubgraphQuery(params) }, subgraphSchema),
+
+  getKgStats: (graphPath?: string): Promise<KGStatsResponse> => {
+    const search = new URLSearchParams();
+    if (graphPath) {
+      search.set("graph_path", graphPath);
+    }
+    const query = search.toString();
+    return request({ method: "GET", path: query ? `/kg/stats?${query}` : "/kg/stats" }, kgStatsResponseSchema);
+  },
 
   queryGraphRag: (payload: GraphRagRequest): Promise<GraphRagResponse> =>
     request({ method: "POST", path: "/query/graph-rag", body: payload }, graphRagResponseSchema),

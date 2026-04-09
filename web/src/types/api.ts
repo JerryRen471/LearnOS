@@ -33,22 +33,40 @@ export type GraphEvidence = {
 };
 
 export type SubgraphNode = {
-  id: string;
-  label?: string;
-  type?: string;
+  node_id: string;
+  node_type: string;
+  name: string;
+  description?: string;
   [key: string]: unknown;
 };
 
 export type SubgraphEdge = {
-  source: string;
-  target: string;
-  type?: string;
+  edge_id?: string;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  evidence_chunk_id?: string;
   [key: string]: unknown;
 };
 
 export type SubgraphData = {
   nodes: SubgraphNode[];
   edges: SubgraphEdge[];
+};
+
+export type KGHubNode = {
+  node_id: string;
+  name: string;
+  node_type: string;
+  degree: number;
+};
+
+export type KGStatsResponse = {
+  nodes: number;
+  edges: number;
+  edge_types: Record<string, number>;
+  related_to_ratio: number;
+  top_hubs: KGHubNode[];
 };
 
 export type GraphRagRequest = {

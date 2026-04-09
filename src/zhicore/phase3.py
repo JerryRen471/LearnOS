@@ -8,6 +8,8 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
+from zhicore.domain.agent.tools import ToolContext, ToolRegistry, ToolResult
+from zhicore.domain.rag.interfaces import RetrievalParams
 from zhicore.graph_rag import GraphRAGEngine
 from zhicore.kg import KnowledgeGraph
 from zhicore.pipeline import load_store
@@ -85,6 +87,7 @@ def retry_agent_run(
     )
     _RUN_STORE.upsert(rerun)
     return rerun.to_payload()
+
 
 
 @dataclass(slots=True)
@@ -205,17 +208,16 @@ class RetrievalAgent:
         rrf_k: int,
         retrieval_mode: str,
     ) -> list[RetrievalEvidence]:
-        search_params: dict[str, Any] = {"query": query, "top_k": top_k}
-        if _accepts_hybrid_kwargs(store):
-            search_params.update(
-                {
-                    "dense_k": dense_k,
-                    "sparse_k": sparse_k,
-                    "rrf_k": rrf_k,
-                    "retrieval_mode": retrieval_mode,
-                }
+        hits = store.retrieve(
+            RetrievalParams(
+                query=query,
+                top_k=top_k,
+                dense_k=dense_k,
+                sparse_k=sparse_k,
+                rrf_k=rrf_k,
+                retrieval_mode=retrieval_mode,
             )
-        hits = store.search(**search_params)
+        )
         evidence: list[RetrievalEvidence] = []
         for idx, hit in enumerate(hits, start=1):
             excerpt = " ".join(hit.chunk.text.split())
@@ -234,6 +236,9 @@ class RetrievalAgent:
 
 
 class GraphAgent:
+    def __init__(self, tools: ToolRegistry | None = None) -> None:
+        self._tools = tools or ToolRegistry()
+
     def run(
         self,
         store: InMemoryVectorStore | HybridRetriever,
@@ -245,16 +250,39 @@ class GraphAgent:
         rrf_k: int,
         retrieval_mode: str,
     ) -> dict[str, Any]:
-        engine = GraphRAGEngine(store=store, graph=graph)
-        result = engine.ask(
-            query=query,
-            top_k=top_k,
-            dense_k=dense_k,
-            sparse_k=sparse_k,
-            rrf_k=rrf_k,
-            retrieval_mode=retrieval_mode,
-            graph_hops=1,
+        # Backward-compatible: execute Graph-RAG via tool registry for modularity.
+        if not self._tools.has("graph_rag"):
+            self._tools.register(
+                "graph_rag",
+                lambda ctx, payload: ToolResult(
+                    ok=True,
+                    data=GraphRAGEngine(store=ctx.store, graph=ctx.graph).ask(
+                        query=str(payload["query"]),
+                        top_k=int(payload["top_k"]),
+                        dense_k=int(payload["dense_k"]),
+                        sparse_k=int(payload["sparse_k"]),
+                        rrf_k=int(payload["rrf_k"]),
+                        retrieval_mode=str(payload["retrieval_mode"]),
+                        graph_hops=int(payload.get("graph_hops", 1)),
+                    ),
+                ),
+            )
+        tool_result = self._tools.run(
+            "graph_rag",
+            ctx=ToolContext(store=store, graph=graph),
+            payload={
+                "query": query,
+                "top_k": top_k,
+                "dense_k": dense_k,
+                "sparse_k": sparse_k,
+                "rrf_k": rrf_k,
+                "retrieval_mode": retrieval_mode,
+                "graph_hops": 1,
+            },
         )
+        if not tool_result.ok:
+            raise RuntimeError(tool_result.error or "graph_rag tool failed")
+        result = tool_result.data
         return {
             "answer": result.answer,
             "text_evidence": [asdict(item) for item in result.text_evidence],
@@ -478,10 +506,3 @@ def _execute_agent_run(
         run.error = str(exc)
         run.updated_at = _now_iso()
         return run
-
-
-def _accepts_hybrid_kwargs(store: object) -> bool:
-    klass = store.__class__.__name__.lower()
-    return "hybrid" in klass
-
-

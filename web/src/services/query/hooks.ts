@@ -8,6 +8,8 @@ import type {
   AgentQueryRequest,
   AgentRetryRequest,
   GraphRagRequest,
+  KGBuildRequest,
+  KGStatsResponse,
   KGSubgraphParams,
   LearningPlanRequest,
   LearningSessionRequest,
@@ -27,6 +29,21 @@ export function useSubgraphQuery(params: KGSubgraphParams, enabled = true) {
     queryKey: ["kg-subgraph", params],
     queryFn: () => api.getSubgraph(params),
     enabled,
+  });
+}
+
+export function useKgStats(graphPath: string | undefined, enabled = true) {
+  return useQuery<KGStatsResponse>({
+    queryKey: ["kg-stats", graphPath ?? ""],
+    queryFn: () => api.getKgStats(graphPath),
+    enabled,
+  });
+}
+
+export function useBuildKg() {
+  return useMutation({
+    mutationFn: (payload: KGBuildRequest) => api.buildKg(payload),
+    mutationKey: ["kg-build"],
   });
 }
 

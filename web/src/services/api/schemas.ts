@@ -1,15 +1,20 @@
 import { z } from "zod";
 
 const subgraphNodeSchema = z.object({
-  id: z.string(),
-  label: z.string().optional(),
-  type: z.string().optional(),
+  node_id: z.string(),
+  node_type: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
 }).passthrough();
 
 const subgraphEdgeSchema = z.object({
-  source: z.string(),
-  target: z.string(),
-  type: z.string().optional(),
+  edge_id: z.string(),
+  source_id: z.string(),
+  target_id: z.string(),
+  edge_type: z.string(),
+  evidence_chunk_id: z.string(),
+  metadata: z.record(z.string(), z.string()).optional(),
 }).passthrough();
 
 export const subgraphSchema = z.object({
@@ -91,6 +96,21 @@ export const kgBuildResponseSchema = z.object({
   chunks: z.number(),
   nodes: z.number(),
   edges: z.number(),
+});
+
+export const kgStatsHubSchema = z.object({
+  node_id: z.string(),
+  name: z.string(),
+  node_type: z.string(),
+  degree: z.number(),
+});
+
+export const kgStatsResponseSchema = z.object({
+  nodes: z.number(),
+  edges: z.number(),
+  edge_types: z.record(z.string(), z.number()),
+  related_to_ratio: z.number(),
+  top_hubs: z.array(kgStatsHubSchema),
 });
 
 export const learningConceptSchema = z.object({
